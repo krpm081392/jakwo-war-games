@@ -1,12 +1,15 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6 });
 
-app.use(express.static('public'));
+const publicDir = path.join(__dirname, 'public');
+app.use(express.static(publicDir));
+app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
 const WORLD = { w: 5000, h: 5000 };
