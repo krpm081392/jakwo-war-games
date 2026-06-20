@@ -1,399 +1,881 @@
-const express = require('express');
-const http = require('http');
-const path = require('path');
-const { Server } = require('socket.io');
+// =====================================================================
+// JAKWO WARZONE - Server
+// 24/7 endless meme war pixel multiplayer browser game
+// Express + Socket.IO, server-authoritative simulation
+// =====================================================================
+
+const express = require("express");
+const http = require("http");
+const path = require("path");
+const crypto = require("crypto");
+const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e6 });
+const io = new Server(server, { cors: { origin: "*" } });
 
-const publicDir = path.join(__dirname, 'public');
-app.use(express.static(publicDir));
-app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+app.use(express.static(path.join(__dirname, "public")));
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 const PORT = process.env.PORT || 3000;
-const WORLD = { w: 5000, h: 5000 };
+
+// ---------------------------------------------------------------------
+// CONSTANTS
+// ---------------------------------------------------------------------
+const WORLD_SIZE = 5000;
 const MAX_PLAYERS = 100;
-const BOT_COUNT = 50;
-const TICK = 1000 / 20;
-const PLAYER_RADIUS = 22;
-const BASE_SPEED = 190;
+const MAX_BOTS = 50;
+const TICK_RATE = 30; // simulation ticks per second
+const BROADCAST_RATE = 12; // state broadcasts per second
 const SPAWN_PROTECTION_MS = 10000;
-const rings = [
-  {id:'ring1', x:1250, y:1200, r:230},
-  {id:'ring2', x:3700, y:1600, r:230},
-  {id:'ring3', x:2500, y:3850, r:230}
+const MAX_LIVES = 3;
+const BASE_SPEED = 165; // px/sec
+const DASH_DISTANCE = 130;
+const DASH_COOLDOWN_MS = 3000;
+const MAX_HP = 100;
+const PICKUP_RADIUS = 30;
+const TRAP_RADIUS = 22;
+const BOSS_MIN_INTERVAL = 30 * 60 * 1000;
+const BOSS_MAX_INTERVAL = 60 * 60 * 1000;
+const BOSS_MAX_HP = 1000;
+const SUPER_MODE_MS = 60000;
+const EVENT_MIN_GAP = 3 * 60 * 1000;
+const EVENT_MAX_GAP = 6 * 60 * 1000;
+
+function now() { return Date.now(); }
+function rid() { return crypto.randomBytes(6).toString("hex"); }
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function angleDiff(a, b) {
+  let d = Math.abs(a - b) % (Math.PI * 2);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  return d;
+}
+function randomPos() {
+  return { x: rand(80, WORLD_SIZE - 80), y: rand(80, WORLD_SIZE - 80) };
+}
+
+// ---------------------------------------------------------------------
+// WEAPON DEFINITIONS
+// ---------------------------------------------------------------------
+const WEAPONS = {
+  fists:     { name: "Fists",         dmg: 5,  range: 55,  cone: 80,  cooldown: 450,  ammo: null, aoe: 0 },
+  pistol:    { name: "Pistol",        dmg: 9,  range: 240, cone: 18,  cooldown: 480,  ammo: 14,   aoe: 0 },
+  shotgun:   { name: "Shotgun",       dmg: 16, range: 130, cone: 46,  cooldown: 760,  ammo: 6,    aoe: 0 },
+  bow:       { name: "Bow",           dmg: 13, range: 270, cone: 10,  cooldown: 620,  ammo: 10,   aoe: 0 },
+  grenade:   { name: "Grenade",       dmg: 24, range: 200, cone: 360, cooldown: 1600, ammo: 3,    aoe: 90 },
+  fireball:  { name: "Fireball",      dmg: 18, range: 210, cone: 24,  cooldown: 850,  ammo: 8,    aoe: 0 },
+  shockwave: { name: "Shockwave",     dmg: 11, range: 110, cone: 360, cooldown: 1300, ammo: 5,    aoe: 0 },
+  gloves:    { name: "Boxing Gloves", dmg: 12, range: 56,  cone: 80,  cooldown: 380,  ammo: null, aoe: 0 },
+  board:     { name: "Flying Board",  dmg: 0,  range: 0,   cone: 0,   cooldown: 0,    ammo: null, aoe: 0, mobility: true }
+};
+const SUPER_ATTACK = { name: "Energy Blast", dmg: 22, range: 260, cone: 30, cooldown: 400, ammo: null, aoe: 0 };
+const GROUND_WEAPON_POOL = ["pistol", "shotgun", "bow", "grenade", "fireball", "shockwave", "gloves", "board"];
+
+const BOT_NAMES = [
+  "MemeLord420", "DogeWarrior", "PixelPepe", "ChadBoyo", "SadCatGen", "GigaChad99",
+  "FrogKing", "WojakWanderer", "ChonkyBoi", "RizzMaster", "SigmaGremlin", "BasedBandit",
+  "CringeSlayer", "GoblinMode", "SkibidiSnipe", "OhioOutlaw", "RatioKing", "BrainrotBoss",
+  "NPCNumber9", "CapybaraCrew", "TrollFace2", "VibeChecker", "DripGoblin", "AuraFarmer",
+  "MidWestEmu", "FanumTaxer", "GyattGuard", "ShrekIsLove", "DoomerDude", "BloxyFruit"
+];
+const BOT_FACES = ["🐸", "🐶", "🐱", "🦊", "🐵", "🤖", "👽", "💀", "🐼", "🦄", "🐯", "🐔", "🐹", "🦝", "🐙"];
+const BOT_CHAT = [
+  "skibidi rizz fr fr", "ratio + L + you fell off", "this map mid ngl", "GG EZ", "lowkey sus",
+  "no cap that hurt", "sigma grindset activated", "bro thinks he's him", "certified meme moment",
+  "where loot at", "bush camping is crime", "rip bozo", "touch grass lol", "W gameplay", "L take"
 ];
 
-const players = new Map();
-const bots = new Map();
-const loot = new Map();
-const projectiles = new Map();
+// ---------------------------------------------------------------------
+// WORLD STATE
+// ---------------------------------------------------------------------
+const players = new Map();   // socketId -> player
+const bots = new Map();      // botId -> bot
+const groundWeapons = new Map();
+const mysteryBoxes = new Map();
 const traps = new Map();
 const zombies = new Map();
+
 let boss = null;
-let worldEvent = null;
-let nextEventAt = now() + 35000;
-let lastHillAward = 0;
-let nextId = 1;
-let announcements = [];
+let nextBossAt = now() + randInt(BOSS_MIN_INTERVAL, BOSS_MAX_INTERVAL);
+let activeEvent = null;
+let nextEventAt = now() + randInt(EVENT_MIN_GAP, EVENT_MAX_GAP);
 
-const botFaces = ['😭','🐸','🐕','😎','🤡','😡','🥲','👽','🗿','😈','🤓','💀','🐵','🦊','🐻','🐼','🐷','🐱','🦆','🧟'];
-const botNames = ['BushCamper','CryBaby','PepeSniper','DogeKing','NoobMaster','LagLord','TrollFace','BoxHunter','ShotgunJoe','SnailVictim','RagePepe','WojakNPC','BugStepper','RunBro','LastBraincell','SkillIssue','FrogLord','HideInBush','LootGoblin','DashSpam'];
-const trashTalk = ['ez 😂','come bush bro','skill issue','HAHA noob','where u running?','box is mine','dont step frog','lag saved you','I am bot but better','free kill soon'];
+// ---- static decorations (generated once, sent to clients) ----
+const decorations = { trees: [], bushes: [], rocks: [], ponds: [] };
+for (let i = 0; i < 320; i++) decorations.trees.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), s: rand(0.8, 1.4) });
+for (let i = 0; i < 130; i++) decorations.bushes.push({ id: rid(), x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), r: rand(45, 75) });
+for (let i = 0; i < 90; i++) decorations.rocks.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), s: rand(0.7, 1.3) });
+for (let i = 0; i < 16; i++) decorations.ponds.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), rx: rand(90, 220), ry: rand(60, 160) });
 
-const weaponDefs = {
-  pistol: { name:'Pistol', dmg:18, range:360, speed:700, cd:500, spread:0.05, pellets:1, life:520, icon:'🔫' },
-  shotgun: { name:'Shotgun', dmg:14, range:220, speed:650, cd:800, spread:0.36, pellets:5, life:330, icon:'🟫' },
-  rifle: { name:'Rifle', dmg:14, range:430, speed:850, cd:500, spread:0.03, pellets:1, life:520, icon:'🛠️' },
-  bow: { name:'Bow', dmg:28, range:380, speed:560, cd:700, spread:0.02, pellets:1, life:680, icon:'🏹' },
-  fireball: { name:'Fireball', dmg:32, range:300, speed:430, cd:1000, spread:0.04, pellets:1, life:700, icon:'🔥', radius:40 },
-  shockwave: { name:'Shockwave', dmg:30, range:180, speed:0, cd:1200, spread:0, pellets:1, instant:true, icon:'⚡' },
-  gloves: { name:'Boxing Gloves', dmg:9, range:58, speed:0, cd:360, spread:0, pellets:1, melee:true, icon:'🥊' },
-  grenade: { name:'Grenade', dmg:45, range:260, speed:380, cd:1200, spread:0.1, pellets:1, life:700, icon:'💣', radius:90 },
-  super: { name:'SUPER BLAST', dmg:55, range:420, speed:900, cd:500, spread:0.02, pellets:1, life:500, icon:'🌈', radius:45 }
-};
+// ---- boxing rings (fixed locations) ----
+const rings = [0, 1, 2, 3].map(() => ({ id: rid(), x: rand(600, WORLD_SIZE - 600), y: rand(600, WORLD_SIZE - 600), radius: 95, occupants: [] }));
 
-function rid(prefix='id'){ return prefix + '_' + (nextId++); }
-function rand(min,max){ return Math.random()*(max-min)+min; }
-function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
-function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
-function randomPos(){ return { x: rand(80,WORLD.w-80), y: rand(80,WORLD.h-80) }; }
-function safeSpawn(){
-  for(let i=0;i<30;i++){
-    const p = randomPos();
-    let ok = true;
-    for(const pl of allActors()) if(dist(p,pl)<260) { ok=false; break; }
-    if(ok) return p;
-  }
-  return randomPos();
+// =====================================================================
+// HELPERS: entity creation
+// =====================================================================
+function freshEffects() {
+  return {
+    slowUntil: 0, tinyUntil: 0, reverseUntil: 0, jumpyUntil: 0,
+    shieldUntil: 0, doubleDmgUntil: 0, speedBoostUntil: 0, boardUntil: 0, superModeUntil: 0
+  };
 }
-function now(){ return Date.now(); }
-function say(text){ announcements.push({text, t: now()}); if(announcements.length>8) announcements.shift(); io.emit('announce', text); }
-function allActors(){ return [...players.values(), ...bots.values()].filter(a=>!a.dead); }
-function actorById(id){ return players.get(id) || bots.get(id); }
-function clearEvent(){ worldEvent=null; zombies.clear(); nextEventAt = now() + rand(65000,95000); }
-function ringOf(a){ return rings.find(r => Math.hypot(a.x-r.x, a.y-r.y) < r.r); }
-function ringOccupants(r){ return allActors().filter(a => Math.hypot(a.x-r.x, a.y-r.y) < r.r); }
-function canDamage(attacker, target){
-  if(!attacker || !target) return true;
-  const ar = ringOf(attacker), tr = ringOf(target);
-  if(ar || tr) return ar && tr && ar.id === tr.id;
+
+function createPlayer(socketId, name, face, isMobile) {
+  const pos = randomPos();
+  return {
+    id: socketId, socketId, isBot: false, isMobile: !!isMobile,
+    name: (name || "Player").slice(0, 16),
+    face: face || "emoji:🙂",
+    x: pos.x, y: pos.y, aimAngle: 0,
+    hp: MAX_HP, maxHp: MAX_HP, lives: 1, alive: true,
+    weapon: "fists", ammo: null,
+    kills: 0, deaths: 0, streak: 0,
+    lastAttackTime: 0, dashCooldownUntil: 0,
+    spawnProtectedUntil: now() + SPAWN_PROTECTION_MS,
+    effects: freshEffects(),
+    inBush: false, inRing: null, superMode: false,
+    input: { mx: 0, my: 0 },
+    lastChat: "", lastChatTime: 0,
+    lastKothHeal: 0
+  };
+}
+
+function createBot(id) {
+  const pos = randomPos();
+  return {
+    id, isBot: true,
+    name: BOT_NAMES[randInt(0, BOT_NAMES.length - 1)] + randInt(1, 99),
+    face: "emoji:" + BOT_FACES[randInt(0, BOT_FACES.length - 1)],
+    x: pos.x, y: pos.y, aimAngle: 0,
+    hp: MAX_HP, maxHp: MAX_HP, lives: 1, alive: true,
+    weapon: "fists", ammo: null,
+    kills: 0, deaths: 0, streak: 0,
+    lastAttackTime: 0, dashCooldownUntil: 0,
+    spawnProtectedUntil: now() + SPAWN_PROTECTION_MS,
+    effects: freshEffects(),
+    inBush: false, inRing: null, superMode: false,
+    input: { mx: 0, my: 0 },
+    lastChat: "", lastChatTime: 0,
+    lastKothHeal: 0,
+    aiState: "wander", wanderDir: rand(0, Math.PI * 2), nextWanderChange: 0,
+    nextThinkAt: 0, nextChatAt: now() + randInt(8000, 20000)
+  };
+}
+
+for (let i = 0; i < MAX_BOTS; i++) {
+  const b = createBot(rid());
+  bots.set(b.id, b);
+}
+
+function spawnGroundWeapon() {
+  if (groundWeapons.size >= 40) return;
+  const type = GROUND_WEAPON_POOL[randInt(0, GROUND_WEAPON_POOL.length - 1)];
+  const pos = randomPos();
+  const id = rid();
+  groundWeapons.set(id, { id, type, x: pos.x, y: pos.y, expireAt: now() + randInt(15000, 30000) });
+}
+function spawnMysteryBox() {
+  if (mysteryBoxes.size >= 25) return;
+  const pos = randomPos();
+  const id = rid();
+  mysteryBoxes.set(id, { id, x: pos.x, y: pos.y, expireAt: now() + randInt(15000, 30000) });
+}
+const TRAP_TYPES = ["worm", "bug", "frog", "snail"];
+function spawnTrap() {
+  if (traps.size >= 32) return;
+  const type = TRAP_TYPES[randInt(0, TRAP_TYPES.length - 1)];
+  const pos = randomPos();
+  const id = rid();
+  traps.set(id, { id, type, x: pos.x, y: pos.y, dir: rand(0, Math.PI * 2), nextTurn: now() + randInt(1000, 3000) });
+}
+for (let i = 0; i < 30; i++) spawnGroundWeapon();
+for (let i = 0; i < 18; i++) spawnMysteryBox();
+for (let i = 0; i < 28; i++) spawnTrap();
+
+// =====================================================================
+// COMBAT
+// =====================================================================
+function ringCompatible(a, b) {
+  if (a.inRing || b.inRing) return a.inRing && b.inRing && a.inRing === b.inRing;
   return true;
 }
 
-function newActor(id, name, face, isBot=false){
-  const p = safeSpawn();
-  return { id, name, face, isBot, x:p.x, y:p.y, vx:0, vy:0, angle:0, hp:100, maxHp:100, lives:1, maxLives:3,
-    kills:0, deaths:0, streak:0, weapon:'pistol', ammo:{grenade:1}, lastShot:0, dead:false, typing:false,
-    bubble:'', bubbleUntil:0, effects:{}, invuln: now()+SPAWN_PROTECTION_MS, dashUntil:0, dashCd:0, superUntil:0, boardUntil:0, target:null, botTalkAt: now()+rand(3000,12000)
-  };
-}
-function serializeActor(a){
-  return {id:a.id,n:a.name,f:a.face,b:a.isBot,x:Math.round(a.x),y:Math.round(a.y),ang:a.angle,hp:a.hp,mh:a.maxHp,l:a.lives,k:a.kills,d:a.deaths,w:a.weapon,typ:a.typing,bb:a.bubbleUntil>now()?a.bubble:'',sup:a.superUntil>now(),brd:a.boardUntil>now(),dead:a.dead};
-}
-function spawnLoot(type=null){
-  const types = ['pistol','shotgun','rifle','bow','gloves','grenade','fireball','shockwave','mystery','life','heal','board'];
-  const t = type || types[Math.floor(Math.random()*types.length)];
-  const p = randomPos();
-  const id = rid('loot');
-  loot.set(id,{id,type:t,x:p.x,y:p.y,spawned:now(),expires:now()+rand(15000,30000),blink:false});
-}
-function refillLoot(){ while(loot.size < 130) spawnLoot(); }
-function spawnTrap(){
-  const types=['worm','bug','frog','snail']; const p=randomPos(); const id=rid('trap');
-  traps.set(id,{id,type:types[Math.floor(Math.random()*types.length)],x:p.x,y:p.y,expires:now()+rand(30000,55000)});
-}
-function refillTraps(){ while(traps.size < 80) spawnTrap(); }
-
-function startWorldEvent(){
-  if(worldEvent) return;
-  const choices = ['storm','hill','horde','dance'];
-  const type = choices[Math.floor(Math.random()*choices.length)];
-  const p = randomPos();
-  if(type==='storm'){
-    worldEvent = {type:'storm', x:p.x, y:p.y, r:1600, until:now()+45000};
-    say('🌩️ MEME STORM! Visibility reduced for 45 seconds!');
-  } else if(type==='hill'){
-    worldEvent = {type:'hill', x:p.x, y:p.y, r:280, until:now()+60000, leader:null};
-    say('👑 KING OF THE HILL ZONE APPEARED! Hold it for power!');
-  } else if(type==='horde'){
-    worldEvent = {type:'horde', x:p.x, y:p.y, r:700, until:now()+50000};
-    for(let i=0;i<24;i++){
-      const id=rid('zombie');
-      zombies.set(id,{id,name:'Zombie Meme',face:'🧟',x:clamp(p.x+rand(-450,450),50,WORLD.w-50),y:clamp(p.y+rand(-450,450),50,WORLD.h-50),hp:55,maxHp:55,lastHit:0});
-    }
-    say('🧟 ZOMBIE HORDE INVADED THE FIELD!');
-  } else {
-    worldEvent = {type:'dance', x:p.x, y:p.y, r:520, until:now()+25000};
-    say('🕺 DANCE FEVER ZONE! Enter for speed, but everyone can see you!');
-  }
-}
-function updateWorldEvent(dt){
-  const t=now();
-  if(!worldEvent && t>nextEventAt) startWorldEvent();
-  if(worldEvent && t>worldEvent.until){ say('⚠️ World event ended'); clearEvent(); return; }
-  if(!worldEvent) return;
-  if(worldEvent.type==='hill'){
-    const inside = allActors().filter(a=>Math.hypot(a.x-worldEvent.x,a.y-worldEvent.y)<worldEvent.r);
-    if(inside.length){
-      inside.sort((a,b)=>b.hp-a.hp);
-      worldEvent.leader=inside[0].name;
-      if(t-lastHillAward>2000){
-        for(const a of inside){ a.effects.speed=t+5000; a.hp=Math.min(a.maxHp,a.hp+2); a.bubble='👑 HILL POWER'; a.bubbleUntil=t+1200; }
-        lastHillAward=t;
-      }
-    } else worldEvent.leader=null;
-  }
-  if(worldEvent.type==='dance'){
-    for(const a of allActors()) if(Math.hypot(a.x-worldEvent.x,a.y-worldEvent.y)<worldEvent.r){
-      a.effects.speed=t+2500; a.bubble='🕺 DANCE BOOST'; a.bubbleUntil=t+1000;
-    }
-  }
-  if(worldEvent.type==='horde') updateZombies(dt);
-}
-function serializeZombie(z){ return {id:z.id,x:Math.round(z.x),y:Math.round(z.y),hp:z.hp,mh:z.maxHp}; }
-function updateZombies(dt){
-  const t=now();
-  for(const [id,z] of zombies){
-    let target=null, nd=999999;
-    for(const a of allActors()){ const d=Math.hypot(a.x-z.x,a.y-z.y); if(d<nd){nd=d; target=a;} }
-    if(target){
-      const ang=Math.atan2(target.y-z.y,target.x-z.x);
-      z.x=clamp(z.x+Math.cos(ang)*120*dt,20,WORLD.w-20);
-      z.y=clamp(z.y+Math.sin(ang)*120*dt,20,WORLD.h-20);
-      if(nd<44 && t>z.lastHit){ damage(target,{id:z.id,name:'Zombie Meme'},12,'zombie bite'); z.lastHit=t+850; }
-    }
-  }
-}
-function damageZombie(z, attacker, amount){
-  z.hp -= amount;
-  if(z.hp<=0){
-    if(attacker){ attacker.kills++; attacker.streak++; }
-    const id=rid('loot'); loot.set(id,{id,type:Math.random()<0.5?'heal':'mystery',x:z.x,y:z.y,spawned:now(),expires:now()+rand(12000,22000)});
-    zombies.delete(z.id);
-  }
+function allTargets() {
+  const arr = [];
+  for (const p of players.values()) arr.push(p);
+  for (const b of bots.values()) arr.push(b);
+  for (const z of zombies.values()) arr.push(z);
+  if (boss) arr.push(boss);
+  return arr;
 }
 
-function spawnBoss(){
-  if(boss) return;
-  const p=randomPos();
-  boss = {id:'boss', name:'GIGA MEME DEMON', x:p.x, y:p.y, hp:1000, maxHp:1000, lastAttack:0, target:null, spawned:now()};
-  say('👹 WORLD BOSS APPEARED! 1000 HP!');
-}
-setInterval(()=>{ if(!boss && Math.random()<0.35) spawnBoss(); }, 60000);
-setTimeout(()=>spawnBoss(), 45000);
+function applyDamage(attacker, target, baseDmg) {
+  let dmg = baseDmg;
+  if (attacker.effects && now() < attacker.effects.doubleDmgUntil) dmg *= 2;
+  if (target.effects && now() < target.effects.shieldUntil) dmg *= 0.5;
+  if (target.superMode) dmg *= 0.5;
+  target.hp -= dmg;
+  if (target.hp > 0) return;
+  target.hp = 0;
 
-function initBots(){
-  for(let i=0;i<BOT_COUNT;i++){
-    const id=rid('bot');
-    const name=botNames[i%botNames.length] + (i>=botNames.length?Math.floor(i/botNames.length):'');
-    const face=botFaces[i%botFaces.length];
-    const b=newActor(id, name, face, true);
-    b.weapon = ['pistol','shotgun','bow','rifle','gloves'][i%5];
-    bots.set(id,b);
-  }
-}
-initBots(); refillLoot(); refillTraps();
-
-io.on('connection', socket => {
-  socket.on('join', data => {
-    if(players.size >= MAX_PLAYERS){ socket.emit('full'); return; }
-    const name = String(data?.name || 'Meme').slice(0,16).replace(/[<>]/g,'');
-    const face = String(data?.face || '😭').slice(0,250000);
-    const a = newActor(socket.id, name, face, false);
-    players.set(socket.id, a);
-    socket.emit('joined',{id:socket.id, world:WORLD});
-    say(`🎭 ${name} entered the field`);
-  });
-  socket.on('input', input => {
-    const p=players.get(socket.id); if(!p||p.dead) return;
-    p.input = input || {};
-    if(input?.angle !== undefined) p.angle = input.angle;
-    p.typing = !!input?.typing;
-  });
-  socket.on('shoot', data => { const p=players.get(socket.id); if(p) shoot(p, data?.angle ?? p.angle); });
-  socket.on('dash', () => { const p=players.get(socket.id); if(p) dash(p); });
-  socket.on('chat', msg => {
-    const p=players.get(socket.id); if(!p) return;
-    const text=String(msg||'').slice(0,80).replace(/[<>]/g,'');
-    p.bubble=text; p.bubbleUntil=now()+4000; p.typing=false;
-    io.emit('chat',{name:p.name,text});
-  });
-  socket.on('disconnect',()=>{ const p=players.get(socket.id); if(p) say(`🚪 ${p.name} left`); players.delete(socket.id); });
-});
-
-function dash(a){
-  const t=now(); if(t<a.dashCd || a.typing || a.dead) return;
-  a.dashUntil=t+170; a.dashCd=t+1700;
-}
-function shoot(a, angle){
-  const t=now(); if(a.dead || a.typing || t<a.lastShot) return;
-  const w = weaponDefs[a.superUntil>t?'super':a.weapon] || weaponDefs.pistol;
-  a.lastShot = t + w.cd;
-  if(w.instant || w.melee){
-    for(const target of allActors()){
-      if(target.id===a.id) continue;
-      const d=dist(a,target);
-      const targetAngle = Math.atan2(target.y-a.y,target.x-a.x);
-      const facing = Math.abs(Math.atan2(Math.sin(targetAngle-angle), Math.cos(targetAngle-angle))) < 0.9;
-      if(d<w.range && facing) damage(target,a,w.dmg,w.melee?'boxing gloves':'shockwave');
-    }
+  if (target.isBoss) {
+    if (attacker.kills !== undefined && attacker !== target) attacker.kills++;
+    handleBossDeath();
     return;
   }
-  for(let i=0;i<w.pellets;i++){
-    const ang = angle + rand(-w.spread,w.spread);
-    const id=rid('pr');
-    projectiles.set(id,{id,owner:a.id,x:a.x,y:a.y,vx:Math.cos(ang)*w.speed,vy:Math.sin(ang)*w.speed,dmg:w.dmg,weapon:a.superUntil>t?'super':a.weapon,expires:t+w.life,radius:w.radius||16});
+
+  if (target.isZombie) {
+    zombies.delete(target.id);
+    if (attacker.kills !== undefined && attacker !== target) attacker.kills++;
+    return;
   }
-}
-function damage(target, attacker, amount, cause){
-  if(target.dead || now()<target.invuln) return;
-  if(attacker && !canDamage(attacker, target)) return;
-  target.hp -= amount;
-  if(target.hp <= 0) kill(target, attacker, cause);
-}
-function kill(victim, attacker, cause){
-  victim.deaths++; victim.lives--;
-  victim.dead=true;
-  victim.hp=0;
-  victim.bubble='💀'; victim.bubbleUntil=now()+2000;
-  for(let i=0;i<3;i++) spawnDropped(victim.x+rand(-45,45), victim.y+rand(-45,45));
-  if(attacker && attacker.id !== victim.id){
-    attacker.kills++; attacker.streak++;
-    say(`💀 ${victim.name} was eliminated by ${attacker.name}`);
+
+  target.lives -= 1;
+  target.deaths = (target.deaths || 0) + 1;
+  if (attacker !== target && attacker.kills !== undefined) {
+    attacker.kills++;
+    attacker.streak = (attacker.streak || 0) + 1;
   }
-  if(!victim.isBot){
-    const sock=io.sockets.sockets.get(victim.id);
-    if(sock) sock.emit('eliminated',{reason:'dead', kills:victim.kills});
-    players.delete(victim.id);
+  leaveRing(target);
+
+  if (target.lives > 0) {
+    respawnEntity(target);
   } else {
-    setTimeout(()=>{
-      const b=newActor(victim.id, victim.name, victim.face, true);
-      b.weapon=['pistol','shotgun','bow','rifle','gloves'][Math.floor(Math.random()*5)];
-      bots.set(victim.id,b);
-    }, 2500);
+    target.alive = false;
+    target.streak = 0;
+    if (target.isBot) {
+      bots.delete(target.id);
+      setTimeout(() => {
+        if (bots.size < MAX_BOTS) {
+          const nb = createBot(rid());
+          bots.set(nb.id, nb);
+        }
+      }, randInt(3000, 8000));
+    } else {
+      const sock = io.sockets.sockets.get(target.socketId);
+      if (sock) sock.emit("eliminated", { kills: target.kills, deaths: target.deaths });
+      players.delete(target.socketId);
+    }
   }
-}
-function spawnDropped(x,y){
-  const items=['pistol','shotgun','rifle','bow','gloves','grenade','mystery','heal'];
-  const id=rid('loot');
-  loot.set(id,{id,type:items[Math.floor(Math.random()*items.length)],x:clamp(x,50,WORLD.w-50),y:clamp(y,50,WORLD.h-50),spawned:now(),expires:now()+rand(12000,22000)});
-}
-function pickup(a,l){
-  if(l.type in weaponDefs) a.weapon=l.type;
-  else if(l.type==='mystery') applyMystery(a);
-  else if(l.type==='life') a.lives = Math.min(3, a.lives+1);
-  else if(l.type==='heal') a.hp = Math.min(a.maxHp, a.hp+40);
-  else if(l.type==='board') { a.boardUntil = now()+60000; a.bubble='FLYING BOARD!'; a.bubbleUntil=now()+2500; }
-}
-function applyMystery(a){
-  const effects=['speed','shield','heal','life','snail','reverse','teleport','boom'];
-  const e=effects[Math.floor(Math.random()*effects.length)];
-  if(e==='speed') a.effects.speed=now()+30000;
-  if(e==='shield') a.invuln=now()+5000;
-  if(e==='heal') a.hp=a.maxHp;
-  if(e==='life') a.lives=Math.min(3,a.lives+1);
-  if(e==='snail') a.effects.snail=now()+30000;
-  if(e==='reverse') a.effects.reverse=now()+30000;
-  if(e==='teleport'){ const p=randomPos(); a.x=p.x; a.y=p.y; }
-  if(e==='boom') damage(a,a,35,'box explosion');
-  a.bubble = `📦 ${e.toUpperCase()}!`; a.bubbleUntil=now()+3000;
-}
-function applyTrap(a,type){
-  if(type==='worm') a.effects.snail=now()+30000;
-  if(type==='bug') a.effects.reverse=now()+30000;
-  if(type==='frog') a.effects.frog=now()+30000;
-  if(type==='snail') a.effects.snail=now()+30000;
-  a.bubble = `${type} trap!`; a.bubbleUntil=now()+3000;
 }
 
-function updateBot(b,dt){
-  const t=now();
-  if(t>b.botTalkAt){ b.bubble=trashTalk[Math.floor(Math.random()*trashTalk.length)]; b.bubbleUntil=t+3000; b.botTalkAt=t+rand(8000,22000); io.emit('chat',{name:b.name,text:b.bubble}); }
-  let nearest=null, nd=999999;
-  for(const a of allActors()) if(a.id!==b.id){ const d=dist(b,a); if(d<nd){nd=d; nearest=a;} }
-  let targetLoot=null, ld=999999;
-  for(const l of loot.values()){ const d=dist(b,l); if(d<ld){ld=d; targetLoot=l;} }
-  let tx=b.x+rand(-1,1)*100, ty=b.y+rand(-1,1)*100;
-  if(nearest && nd<430){ tx=nearest.x; ty=nearest.y; b.angle=Math.atan2(nearest.y-b.y,nearest.x-b.x); if(nd<320) shoot(b,b.angle); if(b.hp<35){ tx=b.x-(nearest.x-b.x); ty=b.y-(nearest.y-b.y); } }
-  else if(targetLoot){ tx=targetLoot.x; ty=targetLoot.y; }
-  b.input={x:Math.sign(tx-b.x),y:Math.sign(ty-b.y)};
+function respawnEntity(e) {
+  const pos = randomPos();
+  e.x = pos.x; e.y = pos.y;
+  e.hp = e.maxHp;
+  e.alive = true;
+  e.weapon = "fists";
+  e.ammo = null;
+  e.effects = freshEffects();
+  e.superMode = false;
+  e.spawnProtectedUntil = now() + SPAWN_PROTECTION_MS;
+  leaveRing(e);
 }
-function updateBoss(dt){
-  if(!boss) return;
-  let target=null, nd=999999;
-  for(const a of allActors()){ const d=dist(boss,a); if(d<nd){nd=d; target=a;} }
-  if(target){
-    const ang=Math.atan2(target.y-boss.y,target.x-boss.x);
-    boss.x += Math.cos(ang)*75*dt; boss.y += Math.sin(ang)*75*dt;
-    if(nd<90 && now()>boss.lastAttack){ damage(target,{id:'boss',name:'GIGA MEME DEMON'},28,'boss'); boss.lastAttack=now()+900; }
-  }
-  if(boss.hp<=0){
-    say('🌈 BOSS DEFEATED! SUPER POWER DROPPED!');
-    const id=rid('loot'); loot.set(id,{id,type:'superpower',x:boss.x,y:boss.y,spawned:now(),expires:now()+30000});
-    boss=null;
+
+function leaveRing(e) {
+  if (e.inRing) {
+    const ring = rings.find(r => r.id === e.inRing);
+    if (ring) ring.occupants = ring.occupants.filter(id => id !== e.id && id !== e.socketId);
+    e.inRing = null;
   }
 }
-function updateActor(a,dt){
-  if(a.dead) return;
-  const oldX=a.x, oldY=a.y;
-  if(a.isBot) updateBot(a,dt);
-  const inp=a.input||{};
-  let ix=inp.x||0, iy=inp.y||0;
-  if(a.effects.reverse && a.effects.reverse>now()){ ix=-ix; iy=-iy; }
-  let mag=Math.hypot(ix,iy); if(mag>1){ ix/=mag; iy/=mag; }
-  let sp=BASE_SPEED;
-  if(a.effects.speed && a.effects.speed>now()) sp*=1.5;
-  if(a.effects.snail && a.effects.snail>now()) sp*=0.45;
-  if(a.effects.frog && a.effects.frog>now()) sp*= (Math.sin(now()/120)>0?1.8:0.3);
-  if(a.boardUntil>now()) sp*=1.65;
-  if(a.superUntil>now()) sp*=1.35;
-  if(a.typing) sp=0;
-  if(a.dashUntil>now()) sp*=3.2;
-  a.x=clamp(a.x+ix*sp*dt,20,WORLD.w-20); a.y=clamp(a.y+iy*sp*dt,20,WORLD.h-20);
-  const rNow = ringOf(a);
-  if(rNow){
-    const occ = ringOccupants(rNow).filter(o=>o.id!==a.id);
-    const wasInside = Math.hypot(oldX-rNow.x, oldY-rNow.y) < rNow.r;
-    if(!wasInside && occ.length >= 2){ a.x=oldX; a.y=oldY; a.bubble='Ring full! 2 fighters only'; a.bubbleUntil=now()+1300; }
+
+function performAttack(attacker) {
+  const t = now();
+  if (!attacker.alive) return;
+  if (t < attacker.spawnProtectedUntil) return;
+  const def = attacker.superMode ? SUPER_ATTACK : WEAPONS[attacker.weapon];
+  if (!def || def.mobility) return;
+  if (t - attacker.lastAttackTime < def.cooldown) return;
+  attacker.lastAttackTime = t;
+
+  let aoePoint = null;
+  if (def.aoe) {
+    aoePoint = { x: attacker.x + Math.cos(attacker.aimAngle) * def.range, y: attacker.y + Math.sin(attacker.aimAngle) * def.range };
   }
-  for(const [id,l] of loot){ if(dist(a,l)<42){ if(l.type==='superpower'){ a.superUntil=now()+60000; a.maxHp=200; a.hp=200; a.bubble='SUPER MODE!'; a.bubbleUntil=now()+3500; } else pickup(a,l); loot.delete(id); } }
-  for(const [id,tr] of traps){ if(dist(a,tr)<28){ applyTrap(a,tr.type); traps.delete(id); } }
-}
-let last=Date.now();
-setInterval(()=>{
-  const t=Date.now(); const dt=Math.min(0.05,(t-last)/1000); last=t;
-  for(const a of allActors()) updateActor(a,dt);
-  for(const [id,p] of projectiles){
-    p.x += p.vx*dt; p.y += p.vy*dt;
-    if(t>p.expires || p.x<0||p.y<0||p.x>WORLD.w||p.y>WORLD.h){ projectiles.delete(id); continue; }
-    for(const a of allActors()){
-      if(a.id===p.owner) continue;
-      if(dist(a,p)<p.radius){ damage(a,actorById(p.owner),p.dmg,p.weapon); projectiles.delete(id); break; }
+
+  for (const target of allTargets()) {
+    if (target === attacker) continue;
+    if (!target.alive) continue;
+    if (target.spawnProtectedUntil && t < target.spawnProtectedUntil) continue;
+    if (!ringCompatible(attacker, target)) continue;
+
+    let inRange = false;
+    if (aoePoint) {
+      inRange = dist(target, aoePoint) <= def.aoe;
+    } else {
+      const d = dist(attacker, target);
+      if (d <= def.range) {
+        if (def.cone >= 360) {
+          inRange = true;
+        } else {
+          const ang = Math.atan2(target.y - attacker.y, target.x - attacker.x);
+          inRange = angleDiff(attacker.aimAngle, ang) <= (def.cone / 2) * (Math.PI / 180);
+        }
+      }
     }
-    if(boss && dist(boss,p)<70){ boss.hp-=p.dmg; projectiles.delete(id); continue; }
-    for(const z of zombies.values()){
-      if(Math.hypot(z.x-p.x,z.y-p.y)<36){ damageZombie(z, actorById(p.owner), p.dmg); projectiles.delete(id); break; }
+    if (!inRange) continue;
+    applyDamage(attacker, target, def.dmg);
+  }
+
+  if (!attacker.superMode && def.ammo != null) {
+    attacker.ammo--;
+    if (attacker.ammo <= 0) { attacker.weapon = "fists"; attacker.ammo = null; }
+  }
+}
+
+function performDash(e) {
+  const t = now();
+  if (!e.alive) return;
+  if (t < e.dashCooldownUntil) return;
+  e.dashCooldownUntil = t + DASH_COOLDOWN_MS;
+  let dx = e.input.mx, dy = e.input.my;
+  if (!dx && !dy) { dx = Math.cos(e.aimAngle); dy = Math.sin(e.aimAngle); }
+  const len = Math.hypot(dx, dy) || 1;
+  e.x = clamp(e.x + (dx / len) * DASH_DISTANCE, 0, WORLD_SIZE);
+  e.y = clamp(e.y + (dy / len) * DASH_DISTANCE, 0, WORLD_SIZE);
+}
+
+// =====================================================================
+// MOVEMENT
+// =====================================================================
+function inWater(x, y) {
+  for (const p of decorations.ponds) {
+    const dx = (x - p.x) / p.rx, dy = (y - p.y) / p.ry;
+    if (dx * dx + dy * dy <= 1) return true;
+  }
+  return false;
+}
+
+function speedMultiplier(e) {
+  const t = now();
+  let mult = 1;
+  if (t < e.effects.slowUntil) mult *= 0.3;
+  if (t < e.effects.tinyUntil) mult *= 0.45;
+  if (t < e.effects.speedBoostUntil) mult *= 1.6;
+  if (t < e.effects.boardUntil) mult *= 1.85;
+  if (t < e.effects.superModeUntil) mult *= 1.35;
+  if (inWater(e.x, e.y)) mult *= 0.6;
+  return mult;
+}
+
+function updateMovement(e, dt) {
+  if (!e.alive) return;
+  const t = now();
+  let mx = e.input.mx || 0, my = e.input.my || 0;
+  if (t < e.effects.reverseUntil) { mx = -mx; my = -my; }
+  const len = Math.hypot(mx, my);
+  if (len > 1) { mx /= len; my /= len; }
+  const mult = speedMultiplier(e);
+  let nx = e.x + mx * BASE_SPEED * mult * dt;
+  let ny = e.y + my * BASE_SPEED * mult * dt;
+  if (t < e.effects.jumpyUntil) {
+    nx += rand(-3, 3);
+    ny += rand(-3, 3);
+  }
+  e.x = clamp(nx, 0, WORLD_SIZE);
+  e.y = clamp(ny, 0, WORLD_SIZE);
+}
+
+// =====================================================================
+// BOTS AI
+// =====================================================================
+function nearestThreat(bot, range) {
+  let best = null, bestD = range;
+  for (const arr of [players, bots]) {
+    for (const e of arr.values()) {
+      if (e === bot || !e.alive) continue;
+      if (now() < e.spawnProtectedUntil) continue;
+      const d = dist(bot, e);
+      if (d < bestD) { best = e; bestD = d; }
     }
   }
+  return best;
+}
+
+function nearestBush(bot) {
+  let best = null, bestD = 600;
+  for (const b of decorations.bushes) {
+    const d = Math.hypot(bot.x - b.x, bot.y - b.y);
+    if (d < bestD) { best = b; bestD = d; }
+  }
+  return best;
+}
+
+function updateBotAI(bot) {
+  const t = now();
+  if (!bot.alive) return;
+  if (t < bot.nextThinkAt) return;
+  bot.nextThinkAt = t + randInt(180, 320);
+
+  if (t > bot.nextChatAt && Math.random() < 0.5) {
+    bot.lastChat = BOT_CHAT[randInt(0, BOT_CHAT.length - 1)];
+    bot.lastChatTime = t;
+    bot.nextChatAt = t + randInt(10000, 25000);
+  }
+
+  const hpRatio = bot.hp / bot.maxHp;
+  const threat = nearestThreat(bot, 320);
+
+  if (hpRatio < 0.3 && threat) {
+    bot.aiState = "flee";
+  } else if (threat) {
+    bot.aiState = "chase";
+  } else {
+    if (Math.random() < 0.04 && bot.weapon === "fists") bot.aiState = "loot";
+    else if (bot.aiState !== "loot" || Math.random() < 0.02) bot.aiState = "wander";
+  }
+
+  if (bot.aiState === "flee" && threat) {
+    const ang = Math.atan2(bot.y - threat.y, bot.x - threat.x);
+    bot.input.mx = Math.cos(ang); bot.input.my = Math.sin(ang);
+    bot.aimAngle = ang;
+    if (Math.random() < 0.05) performDash(bot);
+  } else if (bot.aiState === "chase" && threat) {
+    const ang = Math.atan2(threat.y - bot.y, threat.x - bot.x);
+    bot.aimAngle = ang;
+    const d = dist(bot, threat);
+    const def = WEAPONS[bot.weapon];
+    if (d > def.range * 0.7) {
+      bot.input.mx = Math.cos(ang); bot.input.my = Math.sin(ang);
+    } else {
+      bot.input.mx = 0; bot.input.my = 0;
+      performAttack(bot);
+    }
+  } else if (bot.aiState === "loot") {
+    let nearest = null, bd = 1e9;
+    for (const w of groundWeapons.values()) {
+      const d = dist(bot, w);
+      if (d < bd) { bd = d; nearest = w; }
+    }
+    if (nearest) {
+      const ang = Math.atan2(nearest.y - bot.y, nearest.x - bot.x);
+      bot.aimAngle = ang;
+      bot.input.mx = Math.cos(ang); bot.input.my = Math.sin(ang);
+    } else {
+      bot.aiState = "wander";
+    }
+  } else {
+    if (t > bot.nextWanderChange) {
+      if (Math.random() < 0.15) {
+        const bush = nearestBush(bot);
+        if (bush) bot.wanderDir = Math.atan2(bush.y - bot.y, bush.x - bot.x);
+        else bot.wanderDir = rand(0, Math.PI * 2);
+      } else {
+        bot.wanderDir = rand(0, Math.PI * 2);
+      }
+      bot.nextWanderChange = t + randInt(1500, 4000);
+    }
+    bot.input.mx = Math.cos(bot.wanderDir) * 0.6;
+    bot.input.my = Math.sin(bot.wanderDir) * 0.6;
+    bot.aimAngle = bot.wanderDir;
+  }
+}
+
+// =====================================================================
+// ZOMBIES (event mobs)
+// =====================================================================
+function updateZombie(z) {
+  if (!z.alive) return;
+  let target = null, bd = 260;
+  for (const arr of [players, bots]) {
+    for (const e of arr.values()) {
+      if (!e.alive || now() < e.spawnProtectedUntil) continue;
+      const d = dist(z, e);
+      if (d < bd) { bd = d; target = e; }
+    }
+  }
+  if (target) {
+    const ang = Math.atan2(target.y - z.y, target.x - z.x);
+    if (bd > 40) {
+      z.x = clamp(z.x + Math.cos(ang) * 95 * (1 / TICK_RATE), 0, WORLD_SIZE);
+      z.y = clamp(z.y + Math.sin(ang) * 95 * (1 / TICK_RATE), 0, WORLD_SIZE);
+    } else if (now() - z.lastAttackTime > 1000) {
+      z.lastAttackTime = now();
+      applyDamage(z, target, 6);
+    }
+  }
+}
+
+// =====================================================================
+// BOSS
+// =====================================================================
+function maybeSpawnBoss() {
+  if (boss || now() < nextBossAt) return;
+  const pos = randomPos();
+  boss = {
+    id: rid(), isBoss: true, name: "WARLORD MEME BOSS",
+    x: pos.x, y: pos.y, aimAngle: 0,
+    hp: BOSS_MAX_HP, maxHp: BOSS_MAX_HP, alive: true,
+    lastAttackTime: 0, spawnProtectedUntil: 0,
+    effects: freshEffects(), inRing: null
+  };
+}
+function updateBoss(dt) {
+  if (!boss) return;
+  let target = null, bd = 500;
+  for (const arr of [players, bots]) {
+    for (const e of arr.values()) {
+      if (!e.alive || now() < e.spawnProtectedUntil) continue;
+      const d = dist(boss, e);
+      if (d < bd) { bd = d; target = e; }
+    }
+  }
+  if (target) {
+    const ang = Math.atan2(target.y - boss.y, target.x - boss.x);
+    boss.aimAngle = ang;
+    if (bd > 70) {
+      boss.x = clamp(boss.x + Math.cos(ang) * 70 * dt, 0, WORLD_SIZE);
+      boss.y = clamp(boss.y + Math.sin(ang) * 70 * dt, 0, WORLD_SIZE);
+    } else if (now() - boss.lastAttackTime > 1400) {
+      boss.lastAttackTime = now();
+      applyDamage(boss, target, 14);
+    }
+  }
+}
+function handleBossDeath() {
+  const dropX = boss.x, dropY = boss.y;
+  boss = null;
+  nextBossAt = now() + randInt(BOSS_MIN_INTERVAL, BOSS_MAX_INTERVAL);
+  const id = rid();
+  groundWeapons.set(id, { id, type: "legendary", x: dropX, y: dropY, expireAt: now() + 120000 });
+}
+
+// =====================================================================
+// DYNAMIC EVENTS
+// =====================================================================
+const EVENT_TYPES = ["storm", "koth", "zombies", "dance"];
+function maybeStartEvent() {
+  if (activeEvent || now() < nextEventAt) return;
+  const type = EVENT_TYPES[randInt(0, EVENT_TYPES.length - 1)];
+  const pos = randomPos();
+  const duration = randInt(30000, 60000);
+  activeEvent = { type, x: pos.x, y: pos.y, radius: 260, startAt: now(), endAt: now() + duration, nextPulseAt: now() + 5000 };
+
+  if (type === "zombies") {
+    for (let i = 0; i < 15; i++) {
+      const ang = rand(0, Math.PI * 2), r = rand(0, 200);
+      const id = rid();
+      zombies.set(id, {
+        id, isZombie: true, x: clamp(pos.x + Math.cos(ang) * r, 0, WORLD_SIZE), y: clamp(pos.y + Math.sin(ang) * r, 0, WORLD_SIZE),
+        hp: 40, maxHp: 40, alive: true, lastAttackTime: 0, spawnProtectedUntil: 0, effects: freshEffects(), inRing: null
+      });
+    }
+  }
+}
+function updateEvent() {
+  if (!activeEvent) return;
+  const t = now();
+  if (t >= activeEvent.endAt) {
+    if (activeEvent.type === "zombies") zombies.clear();
+    activeEvent = null;
+    nextEventAt = now() + randInt(EVENT_MIN_GAP, EVENT_MAX_GAP);
+    return;
+  }
+  if (activeEvent.type === "koth") {
+    for (const arr of [players, bots]) {
+      for (const e of arr.values()) {
+        if (!e.alive) continue;
+        if (dist(e, activeEvent) <= activeEvent.radius) {
+          e.effects.speedBoostUntil = t + 1000;
+          if (t - e.lastKothHeal > 1000) { e.lastKothHeal = t; e.hp = Math.min(e.maxHp, e.hp + 2); }
+        }
+      }
+    }
+  } else if (activeEvent.type === "dance") {
+    if (t >= activeEvent.nextPulseAt) {
+      activeEvent.nextPulseAt = t + 5000;
+      for (const arr of [players, bots]) {
+        for (const e of arr.values()) {
+          if (!e.alive) continue;
+          if (dist(e, activeEvent) <= activeEvent.radius) {
+            const recentlyDanced = e.lastChat && e.lastChat.toLowerCase().includes("dance") && (t - e.lastChatTime < 6000);
+            if (!recentlyDanced) e.effects.reverseUntil = t + 2500;
+          }
+        }
+      }
+    }
+  }
+}
+
+// =====================================================================
+// BUSH / RING / PICKUPS / TRAPS
+// =====================================================================
+function updateBush(e) {
+  let inside = false;
+  for (const b of decorations.bushes) {
+    if (Math.hypot(e.x - b.x, e.y - b.y) <= b.r) { inside = true; break; }
+  }
+  e.inBush = inside;
+}
+
+function updateRingMembership(e) {
+  const eid = e.socketId || e.id;
+  if (e.inRing) {
+    const ring = rings.find(r => r.id === e.inRing);
+    if (!ring || Math.hypot(e.x - ring.x, e.y - ring.y) > ring.radius + 25) leaveRing(e);
+    return;
+  }
+  for (const ring of rings) {
+    if (ring.occupants.length >= 2) continue;
+    if (Math.hypot(e.x - ring.x, e.y - ring.y) <= ring.radius) {
+      ring.occupants.push(eid);
+      e.inRing = ring.id;
+      break;
+    }
+  }
+}
+
+function applyBoxEffect(e) {
+  const GOOD = ["heal", "extralife", "speed", "shield", "doubledmg"];
+  const BAD = ["snail", "worm", "frog", "bug", "teleport", "explosion"];
+  const pool = Math.random() < 0.5 ? GOOD : BAD;
+  const effect = pool[randInt(0, pool.length - 1)];
+  const t = now();
+  switch (effect) {
+    case "heal": e.hp = Math.min(e.maxHp, e.hp + 40); break;
+    case "extralife": e.lives = Math.min(MAX_LIVES, e.lives + 1); break;
+    case "speed": e.effects.speedBoostUntil = t + 15000; break;
+    case "shield": e.effects.shieldUntil = t + 15000; break;
+    case "doubledmg": e.effects.doubleDmgUntil = t + 15000; break;
+    case "snail": e.effects.slowUntil = t + 30000; break;
+    case "worm": e.effects.tinyUntil = t + 30000; break;
+    case "frog": e.effects.jumpyUntil = t + 30000; break;
+    case "bug": e.effects.reverseUntil = t + 30000; break;
+    case "teleport": { const p = randomPos(); e.x = p.x; e.y = p.y; break; }
+    case "explosion":
+      e.hp = Math.max(1, e.hp - 15);
+      for (const target of allTargets()) {
+        if (target === e || !target.alive) continue;
+        if (now() < (target.spawnProtectedUntil || 0)) continue;
+        if (dist(e, target) <= 70) applyDamage(e, target, 10);
+      }
+      break;
+  }
+  return effect;
+}
+
+function trapEffect(e, type) {
+  const t = now();
+  if (type === "worm") e.effects.tinyUntil = t + 30000;
+  else if (type === "bug") e.effects.reverseUntil = t + 30000;
+  else if (type === "frog") e.effects.jumpyUntil = t + 30000;
+  else if (type === "snail") e.effects.slowUntil = t + 30000;
+}
+
+function handlePickupsAndTraps() {
+  const t = now();
+  for (const e of [...players.values(), ...bots.values()]) {
+    if (!e.alive) continue;
+
+    for (const trap of traps.values()) {
+      if (Math.hypot(e.x - trap.x, e.y - trap.y) <= TRAP_RADIUS) {
+        trapEffect(e, trap.type);
+        traps.delete(trap.id);
+        setTimeout(spawnTrap, randInt(15000, 35000));
+        break;
+      }
+    }
+
+    for (const box of mysteryBoxes.values()) {
+      if (Math.hypot(e.x - box.x, e.y - box.y) <= PICKUP_RADIUS) {
+        applyBoxEffect(e);
+        mysteryBoxes.delete(box.id);
+        setTimeout(spawnMysteryBox, randInt(4000, 12000));
+        break;
+      }
+    }
+
+    if (t >= e.spawnProtectedUntil && (e.isBot || e.isMobile)) {
+      for (const w of groundWeapons.values()) {
+        if (Math.hypot(e.x - w.x, e.y - w.y) <= PICKUP_RADIUS) {
+          equipGroundWeapon(e, w);
+          break;
+        }
+      }
+    }
+  }
+}
+
+function equipGroundWeapon(e, w) {
+  if (w.type === "legendary") {
+    e.superMode = true;
+    e.effects.superModeUntil = now() + SUPER_MODE_MS;
+    groundWeapons.delete(w.id);
+    return;
+  }
+  if (w.type === "board") {
+    e.effects.boardUntil = now() + 20000;
+    groundWeapons.delete(w.id);
+    setTimeout(spawnGroundWeapon, randInt(5000, 15000));
+    return;
+  }
+  e.weapon = w.type;
+  e.ammo = WEAPONS[w.type].ammo;
+  groundWeapons.delete(w.id);
+  setTimeout(spawnGroundWeapon, randInt(5000, 15000));
+}
+
+function tryPickup(e) {
+  const t = now();
+  if (!e.alive || t < e.spawnProtectedUntil) return;
+  for (const w of groundWeapons.values()) {
+    if (Math.hypot(e.x - w.x, e.y - w.y) <= PICKUP_RADIUS) {
+      equipGroundWeapon(e, w);
+      return;
+    }
+  }
+}
+
+function expireGroundItems() {
+  const t = now();
+  for (const w of groundWeapons.values()) {
+    if (t > w.expireAt) {
+      groundWeapons.delete(w.id);
+      if (w.type !== "legendary") setTimeout(spawnGroundWeapon, randInt(1000, 4000));
+    }
+  }
+  for (const b of mysteryBoxes.values()) {
+    if (t > b.expireAt) {
+      mysteryBoxes.delete(b.id);
+      setTimeout(spawnMysteryBox, randInt(1000, 4000));
+    }
+  }
+}
+
+// =====================================================================
+// MAIN SIMULATION LOOP
+// =====================================================================
+function tick() {
+  const dt = 1 / TICK_RATE;
+  maybeSpawnBoss();
   updateBoss(dt);
-  updateWorldEvent(dt);
-  for(const [id,l] of loot){ if(t>l.expires) loot.delete(id); }
-  for(const [id,tr] of traps){ if(t>tr.expires) traps.delete(id); }
-  refillLoot(); refillTraps();
-  io.emit('state',{
-    selfCount: players.size, maxPlayers:MAX_PLAYERS, bots:bots.size,
-    actors: allActors().map(serializeActor),
-    loot:[...loot.values()].map(l=>({id:l.id,type:l.type,x:Math.round(l.x),y:Math.round(l.y),ttl:Math.max(0,Math.round((l.expires-t)/1000))})),
-    traps:[...traps.values()].map(tr=>({id:tr.id,type:tr.type,x:Math.round(tr.x),y:Math.round(tr.y)})),
-    projectiles:[...projectiles.values()].map(p=>({id:p.id,x:Math.round(p.x),y:Math.round(p.y),w:p.weapon})),
-    boss: boss?{x:Math.round(boss.x),y:Math.round(boss.y),hp:boss.hp,maxHp:boss.maxHp}:null,
-    rings,
-    event: worldEvent ? {...worldEvent, ttl:Math.max(0,Math.round((worldEvent.until-t)/1000)), x:Math.round(worldEvent.x), y:Math.round(worldEvent.y)} : null,
-    zombies:[...zombies.values()].map(serializeZombie),
-    announcements
-  });
-}, TICK);
+  maybeStartEvent();
+  updateEvent();
+  expireGroundItems();
 
-server.listen(PORT,()=>console.log(`JAKWO Warzone Pixel Final running on :${PORT}`));
+  for (const p of players.values()) updateMovement(p, dt);
+  for (const b of bots.values()) { updateBotAI(b); updateMovement(b, dt); }
+  for (const z of zombies.values()) updateZombie(z);
+
+  for (const e of [...players.values(), ...bots.values()]) {
+    updateBush(e);
+    updateRingMembership(e);
+  }
+  handlePickupsAndTraps();
+}
+setInterval(tick, 1000 / TICK_RATE);
+
+function snapshotEntity(e) {
+  return {
+    id: e.socketId || e.id, name: e.name, face: e.face, isBot: !!e.isBot,
+    x: Math.round(e.x), y: Math.round(e.y), a: Math.round(e.aimAngle * 100) / 100,
+    hp: Math.round(e.hp), maxHp: e.maxHp, lives: e.lives, alive: e.alive,
+    weapon: e.weapon, ammo: e.ammo,
+    kills: e.kills, deaths: e.deaths, streak: e.streak,
+    inBush: e.inBush, inRing: e.inRing, superMode: e.superMode,
+    protected: now() < e.spawnProtectedUntil,
+    chat: (now() - e.lastChatTime < 4000) ? e.lastChat : "",
+    fx: {
+      shield: now() < e.effects.shieldUntil,
+      doubleDmg: now() < e.effects.doubleDmgUntil,
+      speed: now() < e.effects.speedBoostUntil,
+      slow: now() < e.effects.slowUntil,
+      tiny: now() < e.effects.tinyUntil,
+      reverse: now() < e.effects.reverseUntil,
+      jumpy: now() < e.effects.jumpyUntil,
+      board: now() < e.effects.boardUntil
+    }
+  };
+}
+
+function broadcastState() {
+  const state = {
+    players: [...players.values()].map(snapshotEntity),
+    bots: [...bots.values()].map(snapshotEntity),
+    zombies: [...zombies.values()].map(z => ({ id: z.id, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, maxHp: z.maxHp })),
+    weapons: [...groundWeapons.values()].map(w => ({ id: w.id, type: w.type, x: Math.round(w.x), y: Math.round(w.y) })),
+    boxes: [...mysteryBoxes.values()].map(b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y) })),
+    traps: [...traps.values()].map(t => ({ id: t.id, type: t.type, x: Math.round(t.x), y: Math.round(t.y) })),
+    rings: rings.map(r => ({ id: r.id, x: r.x, y: r.y, radius: r.radius, occupants: r.occupants.length })),
+    boss: boss ? { x: Math.round(boss.x), y: Math.round(boss.y), hp: boss.hp, maxHp: boss.maxHp } : null,
+    bossTimer: boss ? null : Math.max(0, nextBossAt - now()),
+    event: activeEvent ? { type: activeEvent.type, x: activeEvent.x, y: activeEvent.y, radius: activeEvent.radius, remaining: activeEvent.endAt - now() } : null,
+    playerCount: players.size
+  };
+  io.emit("state", state);
+}
+setInterval(broadcastState, 1000 / BROADCAST_RATE);
+
+// =====================================================================
+// SOCKET HANDLERS
+// =====================================================================
+io.on("connection", (socket) => {
+  socket.emit("world", {
+    worldSize: WORLD_SIZE,
+    decorations,
+    rings: rings.map(r => ({ id: r.id, x: r.x, y: r.y, radius: r.radius })),
+    weapons: WEAPONS
+  });
+
+  socket.on("join", (data) => {
+    if (players.size >= MAX_PLAYERS) {
+      socket.emit("joinError", { message: "Server full (100/100). Try again shortly." });
+      return;
+    }
+    const name = (data && data.name ? String(data.name) : "Player").slice(0, 16) || "Player";
+    let face = data && data.face ? String(data.face) : "emoji:🙂";
+    if (face.length > 60000) face = "emoji:🙂"; // safety cap on payload size
+    const isMobile = !!(data && data.isMobile);
+    const p = createPlayer(socket.id, name, face, isMobile);
+    players.set(socket.id, p);
+    socket.emit("joined", { id: socket.id });
+  });
+
+  socket.on("input", (data) => {
+    const p = players.get(socket.id);
+    if (!p || !p.alive || !data) return;
+    let mx = Number(data.mx) || 0, my = Number(data.my) || 0;
+    const len = Math.hypot(mx, my);
+    if (len > 1) { mx /= len; my /= len; }
+    p.input.mx = mx; p.input.my = my;
+    if (typeof data.a === "number") p.aimAngle = data.a;
+  });
+
+  socket.on("attack", () => {
+    const p = players.get(socket.id);
+    if (p) performAttack(p);
+  });
+
+  socket.on("dash", () => {
+    const p = players.get(socket.id);
+    if (p) performDash(p);
+  });
+
+  socket.on("pickup", () => {
+    const p = players.get(socket.id);
+    if (p) tryPickup(p);
+  });
+
+  socket.on("chat", (data) => {
+    const p = players.get(socket.id);
+    if (!p || !p.alive) return;
+    const text = (data && data.text ? String(data.text) : "").slice(0, 80).trim();
+    if (!text) return;
+    p.lastChat = text;
+    p.lastChatTime = now();
+  });
+
+  socket.on("disconnect", () => {
+    const p = players.get(socket.id);
+    if (p) leaveRing(p);
+    players.delete(socket.id);
+  });
+});
+
+server.listen(PORT, () => console.log("JAKWO WARZONE running on " + PORT));
