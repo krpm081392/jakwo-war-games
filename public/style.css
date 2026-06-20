@@ -1,0 +1,138 @@
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden;
+  background: #14241a;
+  font-family: 'Press Start 2P', monospace;
+  color: #eafff0;
+  touch-action: none;
+}
+.hidden { display: none !important; }
+
+/* ===================== SCREENS ===================== */
+.screen {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 30%, #1f3a26 0%, #0c1710 100%);
+  z-index: 50;
+  padding: 16px;
+}
+.menuBox {
+  background: rgba(10, 20, 14, 0.85);
+  border: 3px solid #5dff8d;
+  box-shadow: 0 0 24px rgba(93,255,141,0.5), inset 0 0 12px rgba(93,255,141,0.15);
+  border-radius: 10px;
+  padding: 28px 24px;
+  width: 100%; max-width: 380px;
+  text-align: center;
+}
+.title {
+  font-size: 26px; line-height: 1.4; color: #5dff8d;
+  text-shadow: 0 0 10px #5dff8d, 2px 2px 0 #0a3318;
+  margin-bottom: 8px; letter-spacing: 1px;
+}
+.title.small { font-size: 18px; }
+.subtitle { font-size: 10px; color: #9fe6b3; margin-bottom: 22px; }
+
+.faceUpload {
+  width: 96px; height: 96px; margin: 0 auto 16px auto;
+  border: 2px dashed #5dff8d; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; overflow: hidden; background: #0d1f13;
+}
+.faceUpload img { width: 100%; height: 100%; object-fit: cover; }
+#faceUploadLabel { font-size: 8px; color: #9fe6b3; padding: 6px; line-height: 1.5; }
+
+#nameInput, #chatInput {
+  width: 100%; padding: 10px; font-family: inherit; font-size: 11px;
+  background: #0d1f13; border: 2px solid #3a7a52; color: #eafff0;
+  border-radius: 6px; outline: none; margin-bottom: 14px;
+}
+#nameInput:focus, #chatInput:focus { border-color: #5dff8d; }
+
+.bigBtn {
+  width: 100%; padding: 14px; font-family: inherit; font-size: 14px;
+  background: linear-gradient(180deg,#5dff8d,#2fbf63); color: #0a2412;
+  border: none; border-radius: 8px; cursor: pointer; font-weight: bold;
+  box-shadow: 0 4px 0 #1d7a3f; letter-spacing: 2px;
+}
+.bigBtn:disabled { background: #2c4a37; color: #6b8e78; box-shadow: 0 4px 0 #1c2e23; cursor: not-allowed; }
+.bigBtn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #1d7a3f; }
+
+.menuError { color: #ff6b6b; font-size: 9px; margin-top: 10px; min-height: 12px; }
+.hint { font-size: 8px; color: #6b8e78; margin-top: 16px; line-height: 1.6; }
+.rotateIcon { font-size: 40px; margin-bottom: 16px; }
+
+/* ===================== GAME ===================== */
+#gameScreen { position: fixed; inset: 0; }
+#gameCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: #2d5a3a; }
+
+.hud {
+  position: absolute; left: 0; right: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; pointer-events: none;
+  font-size: 9px;
+}
+.hud.top {
+  top: 0; background: linear-gradient(180deg, rgba(0,0,0,0.65), transparent);
+  flex-wrap: wrap; gap: 6px;
+}
+.hudLeft, .hudCenter, .hudRight { display: flex; gap: 10px; align-items: center; }
+.hudTitle { color: #5dff8d; text-shadow: 0 0 6px #5dff8d; }
+#hudEvent { color: #ffd95d; }
+#hudBoss { color: #ff6b6b; }
+#hudKills, #hudLives, #hudPlayers { color: #eafff0; }
+
+.hud.bottom {
+  bottom: 0; background: linear-gradient(0deg, rgba(0,0,0,0.7), transparent);
+  flex-direction: column; align-items: stretch; gap: 8px; padding-bottom: 10px;
+}
+.hpBarWrap {
+  position: relative; height: 18px; background: #1a1a1a; border: 2px solid #444;
+  border-radius: 4px; overflow: hidden; width: 220px; max-width: 60vw;
+}
+.hpBarFill { height: 100%; width: 100%; background: linear-gradient(90deg,#ff6b6b,#5dff8d); transition: width 0.15s; }
+#hpText {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 8px; color: #fff; text-shadow: 1px 1px 1px #000;
+}
+.weaponInfo { display: flex; gap: 10px; color: #ffd95d; pointer-events: none; font-size: 9px; }
+.chatRow { pointer-events: auto; max-width: 320px; }
+#chatInput { margin-bottom: 0; font-size: 10px; padding: 8px; }
+
+/* ===================== MOBILE CONTROLS ===================== */
+#mobileControls { position: absolute; inset: 0; z-index: 30; pointer-events: none; }
+.joystick {
+  position: absolute; bottom: 90px; width: 110px; height: 110px;
+  border-radius: 50%; background: rgba(255,255,255,0.08); border: 2px solid rgba(93,255,141,0.5);
+  pointer-events: auto;
+}
+.joystick.left { left: 26px; }
+.joystick.right { right: 26px; }
+.joyStick {
+  position: absolute; left: 50%; top: 50%; width: 46px; height: 46px;
+  margin-left: -23px; margin-top: -23px; border-radius: 50%;
+  background: rgba(93,255,141,0.55); border: 2px solid #5dff8d;
+}
+.actionButtons { position: absolute; right: 24px; bottom: 210px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: auto; }
+.actionBtn {
+  font-family: inherit; border: 2px solid #5dff8d; border-radius: 50%;
+  background: rgba(10,20,14,0.7); color: #eafff0; cursor: pointer;
+}
+.attackBtn { width: 70px; height: 70px; font-size: 22px; background: rgba(255,107,107,0.35); }
+.dashBtn { width: 56px; height: 56px; font-size: 8px; }
+.skillBtn { width: 50px; height: 50px; font-size: 18px; }
+.chatBtnMobile, .pickupBtnMobile {
+  position: absolute; pointer-events: auto; width: 44px; height: 44px; border-radius: 50%;
+  font-family: inherit; border: 2px solid #5dff8d; background: rgba(10,20,14,0.7); color: #eafff0; font-size: 14px;
+}
+.chatBtnMobile { left: 26px; top: 70px; }
+.pickupBtnMobile { left: 84px; top: 130px; }
+.touchHintEnter {
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  font-size: 8px; color: #ffd95d; z-index: 25;
+}
+
+@media (orientation: landscape) {
+  .joystick { bottom: 70px; }
+  .actionButtons { bottom: 160px; }
+}

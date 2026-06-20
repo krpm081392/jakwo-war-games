@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>JAKWO WARZONE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ============ MAIN MENU ============ -->
+  <div id="menuScreen" class="screen">
+    <div class="menuBox">
+      <h1 class="title">JAKWO<br>WARZONE</h1>
+      <p class="subtitle">24/7 endless meme war</p>
+
+      <div class="faceUpload" id="faceUploadBtn">
+        <img id="facePreview" src="" alt="" style="display:none;" />
+        <span id="faceUploadLabel">+ Upload Meme Face</span>
+      </div>
+      <input type="file" id="faceInput" accept="image/*" style="display:none;" />
+
+      <input type="text" id="nameInput" maxlength="16" placeholder="Enter nickname" autocomplete="off" />
+
+      <button id="playBtn" class="bigBtn" disabled>PLAY</button>
+      <p id="menuError" class="menuError"></p>
+      <p class="hint">Phone players: rotate to landscape for best experience.</p>
+    </div>
+  </div>
+
+  <!-- ============ ROTATE WARNING ============ -->
+  <div id="rotateScreen" class="screen hidden">
+    <div class="menuBox">
+      <div class="rotateIcon">📱↻</div>
+      <p>Please rotate your device to LANDSCAPE to play JAKWO WARZONE.</p>
+    </div>
+  </div>
+
+  <!-- ============ DEATH / ELIMINATED SCREEN ============ -->
+  <div id="deathScreen" class="screen hidden">
+    <div class="menuBox">
+      <h2 class="title small">ELIMINATED</h2>
+      <p id="deathStats"></p>
+      <button id="playAgainBtn" class="bigBtn">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <!-- ============ GAME ============ -->
+  <div id="gameScreen" class="hidden">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- TOP HUD -->
+    <div class="hud top">
+      <div class="hudLeft">
+        <span class="hudTitle">JAKWO WARZONE</span>
+        <span id="hudPlayers">0/100</span>
+      </div>
+      <div class="hudCenter">
+        <span id="hudEvent"></span>
+        <span id="hudBoss"></span>
+      </div>
+      <div class="hudRight">
+        <span id="hudKills">Kills: 0</span>
+        <span id="hudLives">❤️ x1</span>
+      </div>
+    </div>
+
+    <!-- CHAT BUBBLES LAYER drawn on canvas -->
+
+    <!-- BOTTOM HUD -->
+    <div class="hud bottom">
+      <div class="hpBarWrap"><div id="hpBarFill" class="hpBarFill"></div><span id="hpText">100/100</span></div>
+      <div class="weaponInfo">
+        <span id="weaponName">Fists</span>
+        <span id="weaponAmmo"></span>
+      </div>
+      <div class="chatRow">
+        <input type="text" id="chatInput" maxlength="80" placeholder="Press Enter to chat..." autocomplete="off" />
+      </div>
+    </div>
+
+    <!-- MOBILE CONTROLS -->
+    <div id="mobileControls" class="hidden">
+      <div id="joyMove" class="joystick left"><div class="joyStick"></div></div>
+      <div id="joyAim" class="joystick right"><div class="joyStick"></div></div>
+      <div class="actionButtons">
+        <button id="btnSkill" class="actionBtn skillBtn">🎁</button>
+        <button id="btnDash" class="actionBtn dashBtn">DASH</button>
+        <button id="btnAttack" class="actionBtn attackBtn">⚔️</button>
+      </div>
+      <button id="btnChatMobile" class="actionBtn chatBtnMobile">💬</button>
+      <button id="btnPickupMobile" class="actionBtn pickupBtnMobile">E</button>
+    </div>
+
+    <div id="touchHint" class="touchHintEnter hidden">Tap to enter chat</div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
