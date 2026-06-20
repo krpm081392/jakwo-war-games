@@ -1,0 +1,9 @@
+{
+  "name":"jakwo-warzone-pixel-final",
+  "version":"1.0.0",
+  "description":"JAKWO Warzone Pixel Chaos MVP - 100 players, bots, loot, boss, traps",
+  "main":"server.js",
+  "scripts":{"start":"node server.js"},
+  "dependencies":{"express":"^4.18.3","socket.io":"^4.7.5"},
+  "engines":{"node":">=18"}
+}
