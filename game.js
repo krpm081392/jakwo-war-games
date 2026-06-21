@@ -59,6 +59,99 @@
   let joined = false;
 
   const FACE_IMG_CACHE = new Map();
+
+
+  // ---------------- ASSET LOADER ----------------
+  // Fix: previous build called assetReady()/drawAsset() but never defined them,
+  // so the render loop crashed and showed only a dark green screen.
+  const ASSET_PATHS = {
+    'board': '/assets/board.png',
+    'body': '/assets/body.png',
+    'bomb': '/assets/bomb.png',
+    'boss': '/assets/boss.png',
+    'boss_island2': '/assets/boss_island2.jpg',
+    'bossisland': '/assets/bossisland.png',
+    'bow': '/assets/bow.png',
+    'box': '/assets/box.png',
+    'boxing_gloves2': '/assets/boxing_gloves2.jpg',
+    'boxing_ring_big': '/assets/boxing_ring_big.jpg',
+    'bridge_river': '/assets/bridge_river.jpg',
+    'bridge_scene': '/assets/bridge_scene.png',
+    'bush': '/assets/bush.png',
+    'campfire': '/assets/campfire.png',
+    'castle': '/assets/castle.png',
+    'castle_ruin': '/assets/castle_ruin.jpg',
+    'chest': '/assets/chest.png',
+    'dragon': '/assets/dragon.png',
+    'dragonboss': '/assets/dragonboss.gif',
+    'fireball': '/assets/fireball.png',
+    'frog_pond': '/assets/frog_pond.jpg',
+    'ghost': '/assets/ghost.png',
+    'gloves': '/assets/gloves.png',
+    'goldensword': '/assets/goldensword.png',
+    'ground': '/assets/ground.png',
+    'heart': '/assets/heart.png',
+    'house': '/assets/house.png',
+    'island_home2': '/assets/island_home2.jpg',
+    'island_house': '/assets/island_house.png',
+    'knife': '/assets/knife.png',
+    'lightning': '/assets/lightning.png',
+    'log': '/assets/log.png',
+    'mushroom': '/assets/mushroom.png',
+    'mushroom_falls': '/assets/mushroom_falls.jpg',
+    'mushroom_island': '/assets/mushroom_island.png',
+    'player_run': '/assets/player_run.gif',
+    'pond2': '/assets/pond2.jpg',
+    'potion': '/assets/potion.jpg',
+    'revolver': '/assets/revolver.png',
+    'rifle': '/assets/rifle.png',
+    'rock1': '/assets/rock1.png',
+    'rock2': '/assets/rock2.png',
+    'scythe': '/assets/scythe.png',
+    'sheep_patch': '/assets/sheep_patch.png',
+    'shop': '/assets/shop.png',
+    'skulls': '/assets/skulls.png',
+    'slime': '/assets/slime.png',
+    'snakeboss': '/assets/snakeboss.png',
+    'stoneground': '/assets/stoneground.png',
+    'sword': '/assets/sword.png',
+    'tree': '/assets/tree.png',
+    'tree_autumn': '/assets/tree_autumn.png',
+    'tree_big': '/assets/tree_big.png',
+    'tree_fallen': '/assets/tree_fallen.png',
+    'tree_old': '/assets/tree_old.png',
+    'tree_pink': '/assets/tree_pink.png',
+    'zeus': '/assets/zeus.png',
+    'zombie': '/assets/zombie.png',
+    'zombie_walk': '/assets/zombie_walk.gif'
+  };
+
+  const ASSETS = {};
+  for (const [name, src] of Object.entries(ASSET_PATHS)) {
+    const im = new Image();
+    im.src = src;
+    ASSETS[name] = im;
+  }
+  function assetReady(name) {
+    const im = ASSETS[name];
+    return !!(im && im.complete && im.naturalWidth > 0 && im.naturalHeight > 0);
+  }
+  function drawAsset(name, x, y, w, h, ax = 0.5, ay = 0.5) {
+    const im = ASSETS[name];
+    if (!im || !im.complete || im.naturalWidth <= 0 || im.naturalHeight <= 0) return false;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(im, x - w * ax, y - h * ay, w, h);
+    ctx.restore();
+    return true;
+  }
+  function pickAssetBySeed(list, seed) {
+    const available = list.filter(assetReady);
+    const arr = available.length ? available : list;
+    if (!arr.length) return null;
+    const n = Math.abs(Math.floor(seed || 0)) % arr.length;
+    return arr[n];
+  }
   let audioUnlocked = false;
   let ambientAudio = null;
   let prevMeState = null;
