@@ -35,11 +35,11 @@ const BASE_SPEED = 165; // px/sec
 const DASH_DISTANCE = 130;
 const DASH_COOLDOWN_MS = 3000;
 const MAX_HP = 100;
-const PICKUP_RADIUS = 30;
+const PICKUP_RADIUS = 72; // easier pickup for phones/PC
 const TRAP_RADIUS = 22;
-const BOSS_MIN_INTERVAL = 30 * 60 * 1000;
-const BOSS_MAX_INTERVAL = 60 * 60 * 1000;
-const BOSS_MAX_HP = 1000;
+const BOSS_MIN_INTERVAL = 2 * 60 * 1000; // test build: boss appears fast
+const BOSS_MAX_INTERVAL = 4 * 60 * 1000;
+const BOSS_MAX_HP = 5000;
 const SUPER_MODE_MS = 60000;
 const EVENT_MIN_GAP = 3 * 60 * 1000;
 const EVENT_MAX_GAP = 6 * 60 * 1000;
@@ -64,7 +64,12 @@ function randomPos() {
 // ---------------------------------------------------------------------
 const WEAPONS = {
   fists:     { name: "Fists",         dmg: 5,  range: 55,  cone: 80,  cooldown: 450,  ammo: null, aoe: 0 },
-  pistol:    { name: "Pistol",        dmg: 9,  range: 240, cone: 18,  cooldown: 480,  ammo: 14,   aoe: 0 },
+  sword:     { name: "Sword",         dmg: 13, range: 68,  cone: 95,  cooldown: 480,  ammo: null, aoe: 0 },
+  knife:     { name: "Knife",         dmg: 9,  range: 58,  cone: 90,  cooldown: 330,  ammo: null, aoe: 0 },
+  scythe:    { name: "Dark Scythe",   dmg: 18, range: 82,  cone: 110, cooldown: 760,  ammo: null, aoe: 0 },
+  pistol:    { name: "Pistol",        dmg: 9,  range: 210, cone: 18,  cooldown: 480,  ammo: 14,   aoe: 0 },
+  revolver:  { name: "Revolver",      dmg: 14, range: 230, cone: 16,  cooldown: 620,  ammo: 6,    aoe: 0 },
+  rifle:     { name: "Rifle",         dmg: 11, range: 310, cone: 12,  cooldown: 430,  ammo: 25,   aoe: 0 },
   shotgun:   { name: "Shotgun",       dmg: 16, range: 130, cone: 46,  cooldown: 760,  ammo: 6,    aoe: 0 },
   bow:       { name: "Bow",           dmg: 13, range: 270, cone: 10,  cooldown: 620,  ammo: 10,   aoe: 0 },
   grenade:   { name: "Grenade",       dmg: 24, range: 200, cone: 360, cooldown: 1600, ammo: 3,    aoe: 90 },
@@ -74,7 +79,7 @@ const WEAPONS = {
   board:     { name: "Flying Board",  dmg: 0,  range: 0,   cone: 0,   cooldown: 0,    ammo: null, aoe: 0, mobility: true }
 };
 const SUPER_ATTACK = { name: "Energy Blast", dmg: 22, range: 260, cone: 30, cooldown: 400, ammo: null, aoe: 0 };
-const GROUND_WEAPON_POOL = ["pistol", "shotgun", "bow", "grenade", "fireball", "shockwave", "gloves", "board"];
+const GROUND_WEAPON_POOL = ["sword", "knife", "scythe", "pistol", "revolver", "rifle", "shotgun", "bow", "grenade", "fireball", "shockwave", "gloves", "board"];
 
 const BOT_NAMES = [
   "MemeLord420", "DogeWarrior", "PixelPepe", "ChadBoyo", "SadCatGen", "GigaChad99",
@@ -99,9 +104,10 @@ const groundWeapons = new Map();
 const mysteryBoxes = new Map();
 const traps = new Map();
 const zombies = new Map();
+const bossFireballs = new Map();
 
 let boss = null;
-let nextBossAt = now() + randInt(BOSS_MIN_INTERVAL, BOSS_MAX_INTERVAL);
+let nextBossAt = now() + 30000; // first boss fast for testing
 let activeEvent = null;
 let nextEventAt = now() + randInt(EVENT_MIN_GAP, EVENT_MAX_GAP);
 
@@ -110,10 +116,38 @@ const decorations = { trees: [], bushes: [], rocks: [], ponds: [] };
 for (let i = 0; i < 320; i++) decorations.trees.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), s: rand(0.8, 1.4) });
 for (let i = 0; i < 130; i++) decorations.bushes.push({ id: rid(), x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), r: rand(45, 75) });
 for (let i = 0; i < 90; i++) decorations.rocks.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), s: rand(0.7, 1.3) });
-for (let i = 0; i < 16; i++) decorations.ponds.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), rx: rand(90, 220), ry: rand(60, 160) });
+for (let i = 0; i < 10; i++) decorations.ponds.push({ x: rand(0, WORLD_SIZE), y: rand(0, WORLD_SIZE), rx: rand(55, 125), ry: rand(35, 85) });
 
 // ---- boxing rings (fixed locations) ----
-const rings = [0, 1, 2, 3].map(() => ({ id: rid(), x: rand(600, WORLD_SIZE - 600), y: rand(600, WORLD_SIZE - 600), radius: 95, occupants: [] }));
+const rings = [0, 1, 2, 3].map(() => ({ id: rid(), x: rand(600, WORLD_SIZE - 600), y: rand(600, WORLD_SIZE - 600), radius: 180, occupants: [] }));
+
+// Static map objects drawn by the client and blocked by the server.
+// Keep this list small for performance. Trees/rocks use circle collision below.
+const setPieces = [
+  { name: "mushroom_falls", x: 2450, y: 900, w: 380, h: 380, blockR: 160 },
+  { name: "island_home2", x: 780, y: 2550, w: 360, h: 260, blockR: 130 },
+  { name: "bridge_river", x: 1700, y: 2500, w: 420, h: 290, blockR: 115 },
+  { name: "frog_pond", x: 3800, y: 2200, w: 260, h: 220, blockR: 95 },
+  { name: "pond2", x: 3300, y: 3600, w: 250, h: 160, blockR: 90 },
+  { name: "castle_ruin", x: 4300, y: 650, w: 300, h: 270, blockR: 135 },
+  { name: "island_house", x: 740, y: 760, w: 250, h: 175, blockR: 105 },
+  { name: "bridge_scene", x: 1250, y: 760, w: 260, h: 195, blockR: 70 },
+  { name: "mushroom_island", x: 4000, y: 820, w: 170, h: 250, blockR: 90 },
+  { name: "sheep_patch", x: 1180, y: 4100, w: 230, h: 230, blockR: 90 },
+  { name: "house", x: 870, y: 1050, w: 120, h: 95, blockR: 58 },
+  { name: "mushroom", x: 1140, y: 1170, w: 105, h: 125, blockR: 55 },
+  { name: "shop", x: 4200, y: 3900, w: 150, h: 110, blockR: 70 },
+  { name: "campfire", x: 1020, y: 820, w: 52, h: 52, blockR: 24 },
+  { name: "castle", x: 4300, y: 720, w: 230, h: 205, blockR: 115 },
+  { name: "bossisland", x: 2500, y: 2500, w: 310, h: 230, blockR: 135 },
+  { name: "skulls", x: 2750, y: 2560, w: 80, h: 62, blockR: 38 },
+  { name: "tree_fallen", x: 1600, y: 1220, w: 120, h: 80, blockR: 42 },
+  { name: "tree_fallen", x: 3300, y: 3150, w: 120, h: 80, blockR: 42 },
+  { name: "tree_old", x: 3650, y: 1700, w: 170, h: 145, blockR: 70 },
+  { name: "tree_big", x: 2050, y: 3650, w: 170, h: 165, blockR: 70 },
+  { name: "tree_pink", x: 850, y: 3100, w: 155, h: 155, blockR: 65 },
+  { name: "tree_autumn", x: 3000, y: 900, w: 140, h: 175, blockR: 65 }
+];
 
 // =====================================================================
 // HELPERS: entity creation
@@ -339,6 +373,37 @@ function performDash(e) {
   const len = Math.hypot(dx, dy) || 1;
   e.x = clamp(e.x + (dx / len) * DASH_DISTANCE, 0, WORLD_SIZE);
   e.y = clamp(e.y + (dy / len) * DASH_DISTANCE, 0, WORLD_SIZE);
+  resolveWorldCollisions(e);
+}
+
+// =====================================================================
+// COLLISION
+// =====================================================================
+function pushOutCircle(e, ox, oy, radius) {
+  const dx = e.x - ox, dy = e.y - oy;
+  const d = Math.hypot(dx, dy) || 0.0001;
+  if (d >= radius) return false;
+  e.x = clamp(ox + (dx / d) * radius, 0, WORLD_SIZE);
+  e.y = clamp(oy + (dy / d) * radius, 0, WORLD_SIZE);
+  return true;
+}
+
+function resolveWorldCollisions(e) {
+  // Collide with tree trunks/crowns. Not every tree needs perfect physics; this keeps it feeling solid.
+  for (const tr of decorations.trees) {
+    if (Math.abs(e.x - tr.x) > 60 || Math.abs(e.y - tr.y) > 70) continue;
+    pushOutCircle(e, tr.x, tr.y, 28 * (tr.s || 1));
+  }
+  // Rocks block movement.
+  for (const rk of decorations.rocks) {
+    if (Math.abs(e.x - rk.x) > 55 || Math.abs(e.y - rk.y) > 55) continue;
+    pushOutCircle(e, rk.x, rk.y, 22 * (rk.s || 1));
+  }
+  // Buildings/castles/logs/campfires block movement.
+  for (const ob of setPieces) {
+    if (Math.abs(e.x - ob.x) > ob.blockR + 40 || Math.abs(e.y - ob.y) > ob.blockR + 40) continue;
+    pushOutCircle(e, ob.x, ob.y, ob.blockR);
+  }
 }
 
 // =====================================================================
@@ -380,6 +445,7 @@ function updateMovement(e, dt) {
   }
   e.x = clamp(nx, 0, WORLD_SIZE);
   e.y = clamp(ny, 0, WORLD_SIZE);
+  resolveWorldCollisions(e);
 }
 
 // =====================================================================
@@ -518,7 +584,7 @@ function maybeSpawnBoss() {
 }
 function updateBoss(dt) {
   if (!boss) return;
-  let target = null, bd = 500;
+  let target = null, bd = 850;
   for (const arr of [players, bots]) {
     for (const e of arr.values()) {
       if (!e.alive || now() < e.spawnProtectedUntil) continue;
@@ -529,15 +595,44 @@ function updateBoss(dt) {
   if (target) {
     const ang = Math.atan2(target.y - boss.y, target.x - boss.x);
     boss.aimAngle = ang;
-    if (bd > 70) {
-      boss.x = clamp(boss.x + Math.cos(ang) * 70 * dt, 0, WORLD_SIZE);
-      boss.y = clamp(boss.y + Math.sin(ang) * 70 * dt, 0, WORLD_SIZE);
-    } else if (now() - boss.lastAttackTime > 1400) {
+    if (bd > 160) {
+      boss.x = clamp(boss.x + Math.cos(ang) * 85 * dt, 0, WORLD_SIZE);
+      boss.y = clamp(boss.y + Math.sin(ang) * 85 * dt, 0, WORLD_SIZE);
+      resolveWorldCollisions(boss);
+    }
+    // Dragon breath / fireball attack every few seconds.
+    if (now() - boss.lastAttackTime > 3800) {
       boss.lastAttackTime = now();
-      applyDamage(boss, target, 14);
+      const id = rid();
+      bossFireballs.set(id, {
+        id, x: boss.x, y: boss.y,
+        vx: Math.cos(ang) * 360, vy: Math.sin(ang) * 360,
+        expireAt: now() + 1800, hit: false
+      });
     }
   }
 }
+
+function updateBossFireballs(dt) {
+  const t = now();
+  for (const fb of [...bossFireballs.values()]) {
+    fb.x += fb.vx * dt;
+    fb.y += fb.vy * dt;
+    if (t > fb.expireAt || fb.x < 0 || fb.y < 0 || fb.x > WORLD_SIZE || fb.y > WORLD_SIZE) {
+      bossFireballs.delete(fb.id); continue;
+    }
+    for (const e of [...players.values(), ...bots.values()]) {
+      if (!e.alive || t < e.spawnProtectedUntil) continue;
+      if (Math.hypot(e.x - fb.x, e.y - fb.y) < 42) {
+        applyDamage(boss || fb, e, 18);
+        e.effects.slowUntil = Math.max(e.effects.slowUntil, t + 1200);
+        bossFireballs.delete(fb.id);
+        break;
+      }
+    }
+  }
+}
+
 function handleBossDeath() {
   const dropX = boss.x, dropY = boss.y;
   boss = null;
@@ -691,7 +786,8 @@ function handlePickupsAndTraps() {
       }
     }
 
-    if (t >= e.spawnProtectedUntil && (e.isBot || e.isMobile)) {
+    // Auto pickup for everyone. Manual E button still works, but this avoids “standing on item and nothing happens”.
+    if (t >= e.spawnProtectedUntil) {
       for (const w of groundWeapons.values()) {
         if (Math.hypot(e.x - w.x, e.y - w.y) <= PICKUP_RADIUS) {
           equipGroundWeapon(e, w);
@@ -730,6 +826,14 @@ function tryPickup(e) {
       return;
     }
   }
+  for (const box of mysteryBoxes.values()) {
+    if (Math.hypot(e.x - box.x, e.y - box.y) <= PICKUP_RADIUS) {
+      applyBoxEffect(e);
+      mysteryBoxes.delete(box.id);
+      setTimeout(spawnMysteryBox, randInt(4000, 12000));
+      return;
+    }
+  }
 }
 
 function expireGroundItems() {
@@ -755,6 +859,7 @@ function tick() {
   const dt = 1 / TICK_RATE;
   maybeSpawnBoss();
   updateBoss(dt);
+  updateBossFireballs(dt);
   maybeStartEvent();
   updateEvent();
   expireGroundItems();
@@ -803,7 +908,8 @@ function broadcastState() {
     boxes: [...mysteryBoxes.values()].map(b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y) })),
     traps: [...traps.values()].map(t => ({ id: t.id, type: t.type, x: Math.round(t.x), y: Math.round(t.y) })),
     rings: rings.map(r => ({ id: r.id, x: r.x, y: r.y, radius: r.radius, occupants: r.occupants.length })),
-    boss: boss ? { x: Math.round(boss.x), y: Math.round(boss.y), hp: boss.hp, maxHp: boss.maxHp } : null,
+    boss: boss ? { x: Math.round(boss.x), y: Math.round(boss.y), hp: Math.round(boss.hp), maxHp: boss.maxHp } : null,
+    fires: [...bossFireballs.values()].map(f => ({ id:f.id, x:Math.round(f.x), y:Math.round(f.y) })),
     bossTimer: boss ? null : Math.max(0, nextBossAt - now()),
     event: activeEvent ? { type: activeEvent.type, x: activeEvent.x, y: activeEvent.y, radius: activeEvent.radius, remaining: activeEvent.endAt - now() } : null,
     playerCount: players.size
@@ -819,6 +925,7 @@ io.on("connection", (socket) => {
   socket.emit("world", {
     worldSize: WORLD_SIZE,
     decorations,
+    setPieces,
     rings: rings.map(r => ({ id: r.id, x: r.x, y: r.y, radius: r.radius })),
     weapons: WEAPONS
   });
