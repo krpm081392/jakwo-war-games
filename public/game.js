@@ -60,6 +60,43 @@
 
   const FACE_IMG_CACHE = new Map();
 
+
+  // ---------------- JAKWO PIXEL ASSETS ----------------
+  const ASSET_PATHS = {
+    ground: "/assets/ground.png", stoneground: "/assets/stoneground.png",
+    tree: "/assets/tree.png", bush: "/assets/bush.png", rock1: "/assets/rock1.png", rock2: "/assets/rock2.png",
+    box: "/assets/box.png", chest: "/assets/chest.png", heart: "/assets/heart.png", gloves: "/assets/gloves.png",
+    sword: "/assets/sword.png", goldensword: "/assets/goldensword.png", rifle: "/assets/rifle.png", revolver: "/assets/revolver.png",
+    knife: "/assets/knife.png", scythe: "/assets/scythe.png", bomb: "/assets/bomb.png", bow: "/assets/bow.png",
+    fireball: "/assets/fireball.png", lightning: "/assets/lightning.png", board: "/assets/board.png",
+    zombie: "/assets/zombie.png", slime: "/assets/slime.png", dragon: "/assets/dragon.png", ghost: "/assets/ghost.png",
+    boss: "/assets/boss.png", zeus: "/assets/zeus.png", snakeboss: "/assets/snakeboss.png",
+    house: "/assets/house.png", mushroom: "/assets/mushroom.png", castle: "/assets/castle.png", bossisland: "/assets/bossisland.png",
+    campfire: "/assets/campfire.png", skulls: "/assets/skulls.png", log: "/assets/log.png", shop: "/assets/shop.png", body: "/assets/body.png"
+  };
+  const ASSETS = {};
+  for (const [k, src] of Object.entries(ASSET_PATHS)) {
+    const img = new Image();
+    img.src = src;
+    ASSETS[k] = img;
+  }
+  function assetReady(name) { const im = ASSETS[name]; return im && im.complete && im.naturalWidth > 0; }
+  function drawAsset(name, x, y, w, h, anchorX = 0.5, anchorY = 1) {
+    const im = ASSETS[name];
+    if (!im || !im.complete || im.naturalWidth <= 0) return false;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(im, x - w * anchorX, y - h * anchorY, w, h);
+    return true;
+  }
+  function pickAssetBySeed(list, seed) { return list[Math.abs(Math.floor(seed)) % list.length]; }
+  function playSfx(name, vol = 0.35) {
+    try {
+      const a = new Audio(`/assets/audio/${name}.mp3`);
+      a.volume = vol; a.play().catch(()=>{});
+    } catch(e) {}
+  }
+
+
   // ---------------- MENU: FACE UPLOAD ----------------
   faceUploadBtn.addEventListener("click", () => faceInput.click());
   faceInput.addEventListener("change", () => {
@@ -355,9 +392,9 @@
   }
 
   function render() {
-    ctx.fillStyle = "#2d5a3a";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawTerrainBackground();
     drawGrid();
+    drawWorldSetPieces();
 
     if (world) {
       for (const p of world.decorations.ponds) drawPond(p);
@@ -388,6 +425,44 @@
     drawVignette();
   }
 
+  function drawTerrainBackground() {
+    if (assetReady("ground")) {
+      const im = ASSETS.ground;
+      const tile = 256;
+      const offX = -((camera.x % tile) + tile) % tile;
+      const offY = -((camera.y % tile) + tile) % tile;
+      ctx.imageSmoothingEnabled = false;
+      for (let x = offX - tile; x < canvas.width + tile; x += tile) {
+        for (let y = offY - tile; y < canvas.height + tile; y += tile) {
+          ctx.drawImage(im, x, y, tile, tile);
+        }
+      }
+    } else {
+      ctx.fillStyle = "#5da54c";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  function drawWorldSetPieces() {
+    if (!world) return;
+    const pieces = [
+      {name:"house", x: 760, y: 720, w:110, h:90},
+      {name:"mushroom", x: 1160, y: 930, w:95, h:110},
+      {name:"shop", x: 4200, y: 3900, w:130, h:95},
+      {name:"campfire", x: 1020, y: 820, w:42, h:42},
+      {name:"castle", x: 4300, y: 720, w:170, h:150},
+      {name:"bossisland", x: 2500, y: 2500, w:230, h:170},
+      {name:"skulls", x: 2750, y: 2560, w:70, h:55},
+      {name:"log", x: 1600, y: 1220, w:75, h:35},
+      {name:"log", x: 3300, y: 3150, w:75, h:35}
+    ];
+    for (const it of pieces) {
+      if (!onScreen(it.x, it.y, Math.max(it.w,it.h)+80)) continue;
+      const s = w2s(it.x, it.y);
+      drawAsset(it.name, s.x, s.y, it.w, it.h);
+    }
+  }
+
   function drawGrid() {
     const s = w2s(0, 0);
     const gridSize = 100;
@@ -409,82 +484,76 @@
   }
 
   function drawPond(p) {
-    if (!onScreen(p.x, p.y, 250)) return;
+    if (!onScreen(p.x, p.y, 260)) return;
     const s = w2s(p.x, p.y);
-    ctx.fillStyle = "rgba(60,140,210,0.75)";
+    ctx.save();
+    ctx.fillStyle = "rgba(53, 139, 204, 0.82)";
     ctx.beginPath(); ctx.ellipse(s.x, s.y, p.rx, p.ry, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "rgba(30,90,150,0.9)"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = "rgba(30,95,150,0.9)"; ctx.lineWidth = 4; ctx.stroke();
+    ctx.fillStyle = "rgba(170,230,255,0.12)";
+    ctx.beginPath(); ctx.ellipse(s.x - p.rx*0.25, s.y - p.ry*0.2, p.rx*0.35, p.ry*0.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
   function drawRock(r) {
-    if (!onScreen(r.x, r.y, 60)) return;
+    if (!onScreen(r.x, r.y, 80)) return;
     const s = w2s(r.x, r.y);
-    ctx.fillStyle = "#7c7c74";
-    ctx.beginPath(); ctx.ellipse(s.x, s.y, 16 * r.s, 12 * r.s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#5e5e57";
-    ctx.beginPath(); ctx.ellipse(s.x - 4, s.y - 3, 7 * r.s, 5 * r.s, 0, 0, Math.PI * 2); ctx.fill();
+    const nm = pickAssetBySeed(["rock1","rock2"], r.x + r.y);
+    if (drawAsset(nm, s.x, s.y + 12, 42 * (r.s || 1), 36 * (r.s || 1))) return;
+    ctx.fillStyle = "#777"; ctx.beginPath(); ctx.ellipse(s.x, s.y, 18, 12, 0, 0, Math.PI*2); ctx.fill();
   }
   function drawTree(t) {
-    if (!onScreen(t.x, t.y, 80)) return;
+    if (!onScreen(t.x, t.y, 110)) return;
     const s = w2s(t.x, t.y);
-    ctx.fillStyle = "#5a3b22";
-    ctx.fillRect(s.x - 4 * t.s, s.y - 4 * t.s, 8 * t.s, 18 * t.s);
-    ctx.fillStyle = "#2f6b3a";
-    ctx.beginPath(); ctx.arc(s.x, s.y - 18 * t.s, 22 * t.s, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#3a8048";
-    ctx.beginPath(); ctx.arc(s.x - 8 * t.s, s.y - 24 * t.s, 14 * t.s, 0, Math.PI * 2); ctx.fill();
+    if (drawAsset("tree", s.x, s.y + 30, 72 * (t.s || 1), 95 * (t.s || 1))) return;
+    ctx.fillStyle = "#5a3b22"; ctx.fillRect(s.x - 5, s.y, 10, 22);
+    ctx.fillStyle = "#2f6b3a"; ctx.beginPath(); ctx.arc(s.x, s.y - 18, 24, 0, Math.PI * 2); ctx.fill();
   }
   function drawBush(b, fgPass) {
-    if (!onScreen(b.x, b.y, 100)) return;
+    if (!onScreen(b.x, b.y, 110)) return;
     const s = w2s(b.x, b.y);
-    if (!fgPass) {
-      ctx.fillStyle = "#2a6336";
+    ctx.globalAlpha = fgPass ? 0.45 : 0.9;
+    if (!drawAsset("bush", s.x, s.y + 20, b.r * 1.1, b.r * 0.9)) {
+      ctx.fillStyle = fgPass ? "rgba(46,120,62,0.55)" : "#2a6336";
       ctx.beginPath(); ctx.arc(s.x, s.y, b.r * 0.55, 0, Math.PI * 2); ctx.fill();
-    } else {
-      ctx.fillStyle = "rgba(46,120,62,0.55)";
-      ctx.beginPath(); ctx.arc(s.x, s.y, b.r * 0.62, 0, Math.PI * 2); ctx.fill();
     }
+    ctx.globalAlpha = 1;
   }
   function drawRing(r) {
-    if (!onScreen(r.x, r.y, r.radius + 30)) return;
+    if (!onScreen(r.x, r.y, r.radius + 80)) return;
     const s = w2s(r.x, r.y);
-    ctx.strokeStyle = "#ffd95d"; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.arc(s.x, s.y, r.radius, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = "rgba(255,217,93,0.08)";
-    ctx.beginPath(); ctx.arc(s.x, s.y, r.radius, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#ffd95d"; ctx.font = "10px monospace"; ctx.textAlign = "center";
-    ctx.fillText("BOXING RING", s.x, s.y - r.radius - 10);
+    if (drawAsset("gloves", s.x, s.y - r.radius - 15, 38, 32, 0.5, 0.5)) {}
+    ctx.strokeStyle = "#ff4848"; ctx.lineWidth = 5;
+    ctx.fillStyle = "rgba(65,115,255,0.14)";
+    ctx.beginPath(); ctx.rect(s.x-r.radius, s.y-r.radius*0.65, r.radius*2, r.radius*1.3); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3;
+    for (let i=1;i<=3;i++) { ctx.beginPath(); ctx.moveTo(s.x-r.radius, s.y-r.radius*0.65+i*r.radius*0.325); ctx.lineTo(s.x+r.radius, s.y-r.radius*0.65+i*r.radius*0.325); ctx.stroke(); }
+    ctx.fillStyle = "#ffd95d"; ctx.font = "10px monospace"; ctx.textAlign = "center"; ctx.fillText("BOXING RING", s.x, s.y - r.radius - 28);
   }
   const TRAP_EMOJI = { worm: "🪱", bug: "🐛", frog: "🐸", snail: "🐌" };
   function drawTrap(t) {
-    if (!onScreen(t.x, t.y, 40)) return;
+    if (!onScreen(t.x, t.y, 45)) return;
     const s = w2s(t.x, t.y);
-    ctx.font = "20px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(TRAP_EMOJI[t.type] || "🐛", s.x, s.y);
+    const map = { worm:"slime", bug:"bush", frog:"slime", snail:"rock1" };
+    const nm = map[t.type] || "slime";
+    if (drawAsset(nm, s.x, s.y + 10, 30, 30)) return;
+    ctx.font = "20px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(TRAP_EMOJI[t.type] || "🐛", s.x, s.y);
   }
   function drawBox(b) {
-    if (!onScreen(b.x, b.y, 40)) return;
+    if (!onScreen(b.x, b.y, 55)) return;
     const s = w2s(b.x, b.y);
-    ctx.save();
-    ctx.translate(s.x, s.y);
-    ctx.rotate(Math.sin(Date.now() / 300) * 0.15);
-    ctx.font = "24px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("🎁", 0, 0);
+    ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(Math.sin(Date.now()/300)*0.10);
+    drawAsset("box", 0, 16, 42, 42, 0.5, 0.5) || drawAsset("chest", 0, 16, 48, 42, 0.5, 0.5);
     ctx.restore();
   }
   const WEAPON_EMOJI = { pistol: "🔫", shotgun: "💥", bow: "🏹", grenade: "💣", fireball: "🔥", shockwave: "⚡", gloves: "🥊", board: "🛹", legendary: "✨" };
   function drawGroundWeapon(w) {
-    if (!onScreen(w.x, w.y, 40)) return;
+    if (!onScreen(w.x, w.y, 60)) return;
     const s = w2s(w.x, w.y);
-    if (w.type === "legendary") {
-      ctx.save();
-      ctx.shadowColor = "#ffd95d"; ctx.shadowBlur = 18;
-      ctx.font = "28px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText("✨", s.x, s.y);
-      ctx.restore();
-      return;
-    }
-    ctx.font = "20px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(WEAPON_EMOJI[w.type] || "❔", s.x, s.y);
+    const map = { pistol:"revolver", shotgun:"rifle", bow:"bow", grenade:"bomb", fireball:"fireball", shockwave:"lightning", gloves:"gloves", board:"board", legendary:"goldensword" };
+    const nm = map[w.type] || "sword";
+    if (w.type === "legendary") { ctx.save(); ctx.shadowColor="#ffd95d"; ctx.shadowBlur=18; drawAsset(nm, s.x, s.y+16, 44, 44, 0.5, 0.5); ctx.restore(); return; }
+    if (drawAsset(nm, s.x, s.y + 14, 34, 34, 0.5, 0.5)) return;
+    ctx.font = "20px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(WEAPON_EMOJI[w.type] || "❔", s.x, s.y);
   }
 
   function drawHealthBar(sx, sy, ratio, width) {
@@ -520,21 +589,20 @@
       ctx.shadowColor = "#ffd95d"; ctx.shadowBlur = 20;
     }
 
-    // body (tiny pixel body)
+    // body (pixel character body with uploaded meme head)
     let bodyScale = 1;
     if (e.fx && e.fx.tiny) bodyScale = 0.6;
-    ctx.fillStyle = e.isBot ? "#c97b3d" : "#4a90d9";
-    ctx.fillRect(s.x - 7 * bodyScale, s.y - 4, 14 * bodyScale, 16 * bodyScale);
+    drawAsset("body", s.x, s.y + 20 * bodyScale, 34 * bodyScale, 44 * bodyScale, 0.5, 1) || (ctx.fillStyle = e.isBot ? "#c97b3d" : "#4a90d9", ctx.fillRect(s.x - 7 * bodyScale, s.y - 4, 14 * bodyScale, 16 * bodyScale));
 
-    // weapon indicator line (aim direction)
+    // weapon indicator line / held weapon direction
     ctx.strokeStyle = "#ffd95d"; ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
-    ctx.lineTo(s.x + Math.cos(e.a) * 22, s.y + Math.sin(e.a) * 22);
+    ctx.lineTo(s.x + Math.cos(e.a) * 24, s.y + Math.sin(e.a) * 24);
     ctx.stroke();
 
     // head (meme face)
-    const headR = 16 * bodyScale;
+    const headR = 18 * bodyScale;
     const img = getFaceImage(e.face);
     ctx.save();
     ctx.beginPath();
@@ -597,29 +665,24 @@
   }
 
   function drawZombie(z) {
-    if (!onScreen(z.x, z.y, 60)) return;
+    if (!onScreen(z.x, z.y, 70)) return;
     const s = w2s(z.x, z.y);
-    ctx.fillStyle = "#5fae5f";
-    ctx.fillRect(s.x - 9, s.y - 6, 18, 20);
-    ctx.font = "20px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("🧟", s.x, s.y - 16);
-    drawHealthBar(s.x, s.y - 30, z.hp / z.maxHp, 30);
+    drawAsset("zombie", s.x, s.y + 16, 42, 52) || (ctx.fillStyle="#5fae5f", ctx.fillRect(s.x-9,s.y-6,18,20));
+    drawHealthBar(s.x, s.y - 42, z.hp / z.maxHp, 36);
   }
 
   function drawBoss(b) {
-    if (!onScreen(b.x, b.y, 200)) return;
+    if (!onScreen(b.x, b.y, 250)) return;
     const s = w2s(b.x, b.y);
-    ctx.save();
-    ctx.shadowColor = "#ff6b6b"; ctx.shadowBlur = 25;
-    ctx.fillStyle = "#7a2222";
-    ctx.beginPath(); ctx.arc(s.x, s.y, 64, 0, Math.PI * 2); ctx.fill();
+    ctx.save(); ctx.shadowColor = "#ff6b6b"; ctx.shadowBlur = 25;
+    const bossImg = b.hp > b.maxHp * 0.5 ? "boss" : "zeus";
+    if (!drawAsset(bossImg, s.x, s.y + 80, 160, 170)) {
+      ctx.fillStyle = "#7a2222"; ctx.beginPath(); ctx.arc(s.x, s.y, 64, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.restore();
-    ctx.font = "56px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("👹", s.x, s.y);
-    ctx.font = "12px monospace";
-    ctx.fillStyle = "#ff6b6b";
-    ctx.fillText("WARLORD MEME BOSS", s.x, s.y - 84);
-    drawHealthBar(s.x, s.y - 76, b.hp / b.maxHp, 120);
+    ctx.font = "12px monospace"; ctx.textAlign = "center";
+    ctx.fillStyle = "#ff6b6b"; ctx.fillText("WARLORD MEME BOSS", s.x, s.y - 94);
+    drawHealthBar(s.x, s.y - 86, b.hp / b.maxHp, 130);
   }
 
   function drawEventZone(ev) {
@@ -636,7 +699,7 @@
   function drawVignette() {
     const g = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, canvas.height / 3, canvas.width / 2, canvas.height / 2, canvas.height);
     g.addColorStop(0, "rgba(0,0,0,0)");
-    g.addColorStop(1, "rgba(0,0,0,0.45)");
+    g.addColorStop(1, "rgba(0,0,0,0.22)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
