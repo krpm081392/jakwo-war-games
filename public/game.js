@@ -48,7 +48,7 @@
   let faceDataUrl = null;
   let myId = null;
   let world = null; // { worldSize, decorations, rings, weapons }
-  let latest = { players: [], bots: [], zombies: [], weapons: [], boxes: [], traps: [], rings: [], boss: null, event: null, playerCount: 0, bossTimer: 0 };
+  let latest = { players: [], bots: [], zombies: [], weapons: [], boxes: [], traps: [], rings: [], boss: null, fires: [], event: null, playerCount: 0, bossTimer: 0 };
   let me = null; // my entity from latest snapshot
   let camera = { x: 2500, y: 2500 };
   let keys = {};
@@ -59,42 +59,37 @@
   let joined = false;
 
   const FACE_IMG_CACHE = new Map();
-
-
-  // ---------------- JAKWO PIXEL ASSETS ----------------
-  const ASSET_PATHS = {
-    ground: "/assets/ground.png", stoneground: "/assets/stoneground.png",
-    tree: "/assets/tree.png", bush: "/assets/bush.png", rock1: "/assets/rock1.png", rock2: "/assets/rock2.png",
-    box: "/assets/box.png", chest: "/assets/chest.png", heart: "/assets/heart.png", gloves: "/assets/gloves.png",
-    sword: "/assets/sword.png", goldensword: "/assets/goldensword.png", rifle: "/assets/rifle.png", revolver: "/assets/revolver.png",
-    knife: "/assets/knife.png", scythe: "/assets/scythe.png", bomb: "/assets/bomb.png", bow: "/assets/bow.png",
-    fireball: "/assets/fireball.png", lightning: "/assets/lightning.png", board: "/assets/board.png",
-    zombie: "/assets/zombie.png", slime: "/assets/slime.png", dragon: "/assets/dragon.png", ghost: "/assets/ghost.png",
-    boss: "/assets/boss.png", zeus: "/assets/zeus.png", snakeboss: "/assets/snakeboss.png",
-    house: "/assets/house.png", mushroom: "/assets/mushroom.png", castle: "/assets/castle.png", bossisland: "/assets/bossisland.png",
-    campfire: "/assets/campfire.png", skulls: "/assets/skulls.png", log: "/assets/log.png", shop: "/assets/shop.png", body: "/assets/body.png"
+  let audioUnlocked = false;
+  let ambientAudio = null;
+  let prevMeState = null;
+  let prevBossAlive = false;
+  const AUDIO_FILES = {
+    pickup: '/assets/audio/pickup.mp3', switch: '/assets/audio/switch.mp3', slash: '/assets/audio/slash.mp3',
+    death: '/assets/audio/death.mp3', hit: '/assets/audio/hit.mp3', fire: '/assets/audio/fire.wav', gun: '/assets/audio/gun.mp3',
+    laser: '/assets/audio/laser.wav', alarm: '/assets/audio/alarm.wav', roar: '/assets/audio/roar.wav',
+    boom: '/assets/audio/boom.mp3', music: '/assets/audio/music.mp3', birds: '/assets/audio/birds.mp3'
   };
-  const ASSETS = {};
-  for (const [k, src] of Object.entries(ASSET_PATHS)) {
-    const img = new Image();
-    img.src = src;
-    ASSETS[k] = img;
-  }
-  function assetReady(name) { const im = ASSETS[name]; return im && im.complete && im.naturalWidth > 0; }
-  function drawAsset(name, x, y, w, h, anchorX = 0.5, anchorY = 1) {
-    const im = ASSETS[name];
-    if (!im || !im.complete || im.naturalWidth <= 0) return false;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(im, x - w * anchorX, y - h * anchorY, w, h);
-    return true;
-  }
-  function pickAssetBySeed(list, seed) { return list[Math.abs(Math.floor(seed)) % list.length]; }
-  function playSfx(name, vol = 0.35) {
+  function unlockAudio() {
+    audioUnlocked = true;
     try {
-      const a = new Audio(`/assets/audio/${name}.mp3`);
-      a.volume = vol; a.play().catch(()=>{});
+      if (!ambientAudio) {
+        ambientAudio = new Audio(AUDIO_FILES.music || AUDIO_FILES.birds);
+        ambientAudio.loop = true;
+        ambientAudio.volume = 0.10;
+      }
+      ambientAudio.play().catch(()=>{});
     } catch(e) {}
   }
+  function playGameSound(name, vol = 0.35) {
+    if (!audioUnlocked) return;
+    try {
+      const src = AUDIO_FILES[name] || `/assets/audio/${name}.mp3`;
+      const a = new Audio(src);
+      a.volume = vol;
+      a.play().catch(()=>{});
+    } catch(e) {}
+  }
+  function playSfx(name, vol = 0.35) { playGameSound(name, vol); }
 
 
   // ---------------- MENU: FACE UPLOAD ----------------
@@ -106,14 +101,18 @@
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const size = 96;
+        // Keep uploaded meme image shape. No circle crop.
+        // PNG keeps transparency if the user uploads a transparent meme head.
+        const size = 128;
         const c = document.createElement("canvas");
         c.width = size; c.height = size;
         const cctx = c.getContext("2d");
-        const scale = Math.max(size / img.width, size / img.height);
+        cctx.clearRect(0, 0, size, size);
+        const scale = Math.min(size / img.width, size / img.height);
         const w = img.width * scale, h = img.height * scale;
+        cctx.imageSmoothingEnabled = false;
         cctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-        faceDataUrl = c.toDataURL("image/jpeg", 0.72);
+        faceDataUrl = c.toDataURL("image/png");
         facePreview.src = faceDataUrl;
         facePreview.style.display = "block";
         faceUploadLabel.style.display = "none";
@@ -161,17 +160,26 @@
 
     socket.on("state", (data) => {
       latest = data;
-      me = data.players.find(p => p.id === myId) || null;
+      const newMe = data.players.find(p => p.id === myId) || null;
+      if (newMe && prevMeState) {
+        if (newMe.weapon !== prevMeState.weapon || newMe.ammo !== prevMeState.ammo) playGameSound("pickup", 0.32);
+        if (newMe.lives > prevMeState.lives) playGameSound("pickup", 0.45);
+        if (newMe.hp < prevMeState.hp - 8) playGameSound("funny", 0.22);
+      }
+      me = newMe;
+      prevMeState = newMe ? { weapon: newMe.weapon, ammo: newMe.ammo, lives: newMe.lives, hp: newMe.hp } : null;
       updateHUD();
     });
 
     socket.on("eliminated", (stats) => {
+      playGameSound("funny", 0.45);
       joined = false;
       myId = null;
       me = null;
       deathStats.textContent = `Kills: ${stats.kills}   Deaths: ${stats.deaths}`;
       gameScreen.classList.add("hidden");
       deathScreen.classList.remove("hidden");
+      playSfx("death", 0.6);
     });
 
     socket.on("disconnect", () => {
@@ -180,6 +188,7 @@
   }
 
   function doJoin() {
+    unlockAudio();
     menuError.textContent = "";
     if (!socket) connectSocket();
     socket.emit("join", { name: nameInput.value.trim().slice(0, 16), face: faceDataUrl, isMobile: IS_TOUCH });
@@ -235,7 +244,7 @@
   // ---------------- MOUSE INPUT (PC) ----------------
   window.addEventListener("mousemove", (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
   window.addEventListener("mousedown", (e) => {
-    if (e.target === canvas && socket && joined) socket.emit("attack");
+    if (e.target === canvas && socket && joined) { socket.emit("attack"); playAttackSound(); }
   });
 
   // ---------------- TOUCH JOYSTICKS ----------------
@@ -289,15 +298,23 @@
   function bindHold(btn, onDown) {
     btn.addEventListener("touchstart", (e) => { e.preventDefault(); onDown(); }, { passive: false });
   }
-  bindHold(btnAttack, () => { if (socket && joined) socket.emit("attack"); });
+  bindHold(btnAttack, () => { if (socket && joined) { socket.emit("attack"); playAttackSound(); } });
   bindHold(btnDash, () => { if (socket && joined) socket.emit("dash"); });
-  bindHold(btnSkill, () => { if (socket && joined) socket.emit("attack"); });
+  bindHold(btnSkill, () => { if (socket && joined) { socket.emit("attack"); playAttackSound(); } });
   bindHold(btnPickupMobile, () => { if (socket && joined) socket.emit("pickup"); });
   btnChatMobile.addEventListener("touchstart", (e) => {
     e.preventDefault();
     const text = prompt("Chat message:");
     if (text && socket && joined) socket.emit("chat", { text: text.slice(0, 80) });
   });
+
+
+  function playAttackSound() {
+    if (!me) return;
+    if (["grenade", "fireball", "shockwave"].includes(me.weapon)) playGameSound("explosion", 0.28);
+    else if (["pistol", "shotgun", "rifle", "revolver"].includes(me.weapon)) playGameSound("boom", 0.20);
+    else playGameSound("funny", 0.16);
+  }
 
   // ---------------- HUD ----------------
   function updateHUD() {
@@ -407,6 +424,7 @@
     for (const t of latest.traps) drawTrap(t);
     for (const bx of latest.boxes) drawBox(bx);
     for (const wp of latest.weapons) drawGroundWeapon(wp);
+    for (const f of (latest.fires || [])) drawFireball(f);
 
     const allEntities = [...latest.bots, ...latest.players, ...latest.zombies.map(z => ({ ...z, isZombie: true }))];
     allEntities.sort((a, b) => a.y - b.y);
@@ -445,7 +463,7 @@
 
   function drawWorldSetPieces() {
     if (!world) return;
-    const pieces = [
+    const pieces = (world.setPieces && world.setPieces.length) ? world.setPieces : [
       {name:"house", x: 760, y: 720, w:110, h:90},
       {name:"mushroom", x: 1160, y: 930, w:95, h:110},
       {name:"shop", x: 4200, y: 3900, w:130, h:95},
@@ -502,9 +520,14 @@
     ctx.fillStyle = "#777"; ctx.beginPath(); ctx.ellipse(s.x, s.y, 18, 12, 0, 0, Math.PI*2); ctx.fill();
   }
   function drawTree(t) {
-    if (!onScreen(t.x, t.y, 110)) return;
+    if (!onScreen(t.x, t.y, 170)) return;
     const s = w2s(t.x, t.y);
-    if (drawAsset("tree", s.x, s.y + 30, 72 * (t.s || 1), 95 * (t.s || 1))) return;
+    const treeList = ["tree", "tree_big", "tree_old", "tree_autumn", "tree_pink"];
+    const nm = pickAssetBySeed(treeList, t.x * 11 + t.y * 17);
+    const scale = t.s || 1;
+    const sizes = { tree:[70,92], tree_big:[105,105], tree_old:[115,100], tree_autumn:[95,120], tree_pink:[105,105] };
+    const sz = sizes[nm] || [72,95];
+    if (drawAsset(nm, s.x, s.y + 34, sz[0] * scale, sz[1] * scale)) return;
     ctx.fillStyle = "#5a3b22"; ctx.fillRect(s.x - 5, s.y, 10, 22);
     ctx.fillStyle = "#2f6b3a"; ctx.beginPath(); ctx.arc(s.x, s.y - 18, 24, 0, Math.PI * 2); ctx.fill();
   }
@@ -519,16 +542,21 @@
     ctx.globalAlpha = 1;
   }
   function drawRing(r) {
-    if (!onScreen(r.x, r.y, r.radius + 80)) return;
+    if (!onScreen(r.x, r.y, r.radius + 120)) return;
     const s = w2s(r.x, r.y);
-    if (drawAsset("gloves", s.x, s.y - r.radius - 15, 38, 32, 0.5, 0.5)) {}
-    ctx.strokeStyle = "#ff4848"; ctx.lineWidth = 5;
-    ctx.fillStyle = "rgba(65,115,255,0.14)";
-    ctx.beginPath(); ctx.rect(s.x-r.radius, s.y-r.radius*0.65, r.radius*2, r.radius*1.3); ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3;
-    for (let i=1;i<=3;i++) { ctx.beginPath(); ctx.moveTo(s.x-r.radius, s.y-r.radius*0.65+i*r.radius*0.325); ctx.lineTo(s.x+r.radius, s.y-r.radius*0.65+i*r.radius*0.325); ctx.stroke(); }
-    ctx.fillStyle = "#ffd95d"; ctx.font = "10px monospace"; ctx.textAlign = "center"; ctx.fillText("BOXING RING", s.x, s.y - r.radius - 28);
+    // Big readable boxing arena. The old one looked like a ring for ants 😂
+    if (assetReady("boxing_ring_big")) {
+      drawAsset("boxing_ring_big", s.x, s.y + r.radius * 0.55, r.radius * 2.5, r.radius * 1.65, 0.5, 1);
+    } else {
+      ctx.strokeStyle = "#ff4848"; ctx.lineWidth = 7;
+      ctx.fillStyle = "rgba(65,115,255,0.18)";
+      ctx.beginPath(); ctx.rect(s.x-r.radius, s.y-r.radius*0.65, r.radius*2, r.radius*1.3); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 4;
+      for (let i=1;i<=3;i++) { ctx.beginPath(); ctx.moveTo(s.x-r.radius, s.y-r.radius*0.65+i*r.radius*0.325); ctx.lineTo(s.x+r.radius, s.y-r.radius*0.65+i*r.radius*0.325); ctx.stroke(); }
+    }
+    ctx.fillStyle = "#ffd95d"; ctx.font = "12px monospace"; ctx.textAlign = "center"; ctx.fillText("BOXING RING", s.x, s.y - r.radius - 18);
   }
+
   const TRAP_EMOJI = { worm: "🪱", bug: "🐛", frog: "🐸", snail: "🐌" };
   function drawTrap(t) {
     if (!onScreen(t.x, t.y, 45)) return;
@@ -563,6 +591,32 @@
     ctx.fillRect(sx - width / 2, sy, width * Math.max(0, ratio), 5);
   }
 
+
+  function heldWeaponAsset(type) {
+    const map = {
+      fists: null, pistol: "revolver", shotgun: "rifle", rifle: "rifle", revolver: "revolver",
+      bow: "bow", grenade: "bomb", fireball: "fireball", shockwave: "lightning",
+      gloves: "gloves", board: "board", sword: "sword", knife: "knife", scythe: "scythe", legendary: "goldensword"
+    };
+    return map[type] || null;
+  }
+  function drawHeldWeapon(e, s, bodyScale) {
+    const nm = e.superMode ? "lightning" : heldWeaponAsset(e.weapon);
+    if (!nm || !assetReady(nm)) return;
+    const ang = e.a || 0;
+    const ox = Math.cos(ang) * 20 * bodyScale;
+    const oy = Math.sin(ang) * 20 * bodyScale - 4;
+    ctx.save();
+    ctx.translate(s.x + ox, s.y + oy);
+    ctx.rotate(ang);
+    ctx.imageSmoothingEnabled = false;
+    const im = ASSETS[nm];
+    const sizeMap = { gloves:[24,24], bomb:[22,22], bow:[32,32], rifle:[40,22], revolver:[30,20], knife:[28,18], scythe:[36,28], sword:[32,22], goldensword:[38,24], fireball:[24,24], lightning:[28,28], board:[34,20] };
+    const [w,h] = sizeMap[nm] || [32,22];
+    ctx.drawImage(im, -w/2, -h/2, w, h);
+    ctx.restore();
+  }
+
   function drawEntity(e) {
     if (!onScreen(e.x, e.y, 80)) return;
     const s = w2s(e.x, e.y);
@@ -589,39 +643,35 @@
       ctx.shadowColor = "#ffd95d"; ctx.shadowBlur = 20;
     }
 
-    // body (pixel character body with uploaded meme head)
+    // grounded shadow + body (prevents floating look)
     let bodyScale = 1;
     if (e.fx && e.fx.tiny) bodyScale = 0.6;
-    drawAsset("body", s.x, s.y + 20 * bodyScale, 34 * bodyScale, 44 * bodyScale, 0.5, 1) || (ctx.fillStyle = e.isBot ? "#c97b3d" : "#4a90d9", ctx.fillRect(s.x - 7 * bodyScale, s.y - 4, 14 * bodyScale, 16 * bodyScale));
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath(); ctx.ellipse(s.x, s.y + 13 * bodyScale, 15 * bodyScale, 6 * bodyScale, 0, 0, Math.PI * 2); ctx.fill();
+    drawAsset("player_run", s.x, s.y + 25 * bodyScale, 42 * bodyScale, 52 * bodyScale, 0.5, 1) || drawAsset("body", s.x, s.y + 23 * bodyScale, 34 * bodyScale, 44 * bodyScale, 0.5, 1) || (ctx.fillStyle = e.isBot ? "#c97b3d" : "#4a90d9", ctx.fillRect(s.x - 7 * bodyScale, s.y - 5, 14 * bodyScale, 18 * bodyScale));
 
-    // weapon indicator line / held weapon direction
-    ctx.strokeStyle = "#ffd95d"; ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.lineTo(s.x + Math.cos(e.a) * 24, s.y + Math.sin(e.a) * 24);
-    ctx.stroke();
+    // actual held weapon sprite. No more yellow stick.
+    drawHeldWeapon(e, s, bodyScale);
 
-    // head (meme face)
+    // uploaded meme face/head: NO circle crop. Keeps PNG transparency / original head shape.
     const headR = 18 * bodyScale;
     const img = getFaceImage(e.face);
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(s.x, s.y - 16 * bodyScale, headR, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
+    const headW = 34 * bodyScale;
+    const headH = 34 * bodyScale;
     if (img && img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, s.x - headR, s.y - 16 * bodyScale - headR, headR * 2, headR * 2);
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 2;
+      ctx.drawImage(img, s.x - headW / 2, s.y - 39 * bodyScale, headW, headH);
+      ctx.restore();
     } else {
       ctx.fillStyle = "#ffe2b8";
-      ctx.fillRect(s.x - headR, s.y - 16 * bodyScale - headR, headR * 2, headR * 2);
+      ctx.fillRect(s.x - headW / 2, s.y - 39 * bodyScale, headW, headH);
     }
-    ctx.restore();
-    ctx.strokeStyle = "#0a2412"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(s.x, s.y - 16 * bodyScale, headR, 0, Math.PI * 2); ctx.stroke();
 
     if (e.face && e.face.startsWith("emoji:")) {
       ctx.font = `${headR * 1.4}px serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(e.face.slice(6), s.x, s.y - 16 * bodyScale);
+      ctx.fillText(e.face.slice(6), s.x, s.y - 23 * bodyScale);
     }
 
     // name + hp (hidden if in bush and far, unless self)
@@ -629,14 +679,14 @@
       ctx.font = "9px 'Press Start 2P', monospace";
       ctx.textAlign = "center";
       ctx.fillStyle = isSelf ? "#5dff8d" : (e.isBot ? "#ffb347" : "#eafff0");
-      ctx.fillText(e.name + (e.inRing ? " 🥊" : ""), s.x, s.y - 16 * bodyScale - headR - 10);
-      drawHealthBar(s.x, s.y - 16 * bodyScale - headR - 7, e.hp / e.maxHp, 34);
+      ctx.fillText(e.name + (e.inRing ? " 🥊" : ""), s.x, s.y - 40 * bodyScale);
+      drawHealthBar(s.x, s.y - 37 * bodyScale, e.hp / e.maxHp, 34);
 
       if (e.chat) {
         ctx.font = "9px monospace";
         const padding = 6;
         const w = Math.min(180, ctx.measureText(e.chat).width + padding * 2);
-        const bx = s.x - w / 2, by = s.y - 16 * bodyScale - headR - 32;
+        const bx = s.x - w / 2, by = s.y - 64 * bodyScale;
         ctx.fillStyle = "rgba(20,30,20,0.85)";
         ctx.fillRect(bx, by, w, 18);
         ctx.strokeStyle = "#5dff8d"; ctx.lineWidth = 1; ctx.strokeRect(bx, by, w, 18);
@@ -664,25 +714,33 @@
     ctx.restore();
   }
 
+  function drawFireball(f) {
+    if (!onScreen(f.x, f.y, 70)) return;
+    const s = w2s(f.x, f.y);
+    ctx.save(); ctx.shadowColor = "#ff7b22"; ctx.shadowBlur = 14;
+    drawAsset("fireball", s.x, s.y + 8, 42, 42, 0.5, 0.5) || (ctx.font="28px serif", ctx.fillText("🔥", s.x, s.y));
+    ctx.restore();
+  }
+
+
   function drawZombie(z) {
     if (!onScreen(z.x, z.y, 70)) return;
     const s = w2s(z.x, z.y);
-    drawAsset("zombie", s.x, s.y + 16, 42, 52) || (ctx.fillStyle="#5fae5f", ctx.fillRect(s.x-9,s.y-6,18,20));
+    drawAsset("zombie_walk", s.x, s.y + 18, 46, 56) || drawAsset("zombie", s.x, s.y + 16, 42, 52) || (ctx.fillStyle="#5fae5f", ctx.fillRect(s.x-9,s.y-6,18,20));
     drawHealthBar(s.x, s.y - 42, z.hp / z.maxHp, 36);
   }
 
   function drawBoss(b) {
-    if (!onScreen(b.x, b.y, 250)) return;
+    if (!onScreen(b.x, b.y, 320)) return;
     const s = w2s(b.x, b.y);
     ctx.save(); ctx.shadowColor = "#ff6b6b"; ctx.shadowBlur = 25;
-    const bossImg = b.hp > b.maxHp * 0.5 ? "boss" : "zeus";
-    if (!drawAsset(bossImg, s.x, s.y + 80, 160, 170)) {
-      ctx.fillStyle = "#7a2222"; ctx.beginPath(); ctx.arc(s.x, s.y, 64, 0, Math.PI * 2); ctx.fill();
+    if (!drawAsset("dragonboss", s.x, s.y + 95, 210, 210, 0.5, 1)) {
+      drawAsset("dragon", s.x, s.y + 90, 180, 180, 0.5, 1) || drawAsset("boss", s.x, s.y + 90, 180, 190, 0.5, 1);
     }
     ctx.restore();
-    ctx.font = "12px monospace"; ctx.textAlign = "center";
-    ctx.fillStyle = "#ff6b6b"; ctx.fillText("WARLORD MEME BOSS", s.x, s.y - 94);
-    drawHealthBar(s.x, s.y - 86, b.hp / b.maxHp, 130);
+    ctx.font = "13px monospace"; ctx.textAlign = "center";
+    ctx.fillStyle = "#ff6b6b"; ctx.fillText("DRAGON BOSS", s.x, s.y - 122);
+    drawHealthBar(s.x, s.y - 112, b.hp / b.maxHp, 170);
   }
 
   function drawEventZone(ev) {
